@@ -35,7 +35,7 @@ RUN apt-get update && \
 # Create a non-root user
 RUN useradd -ms /bin/bash mitgcm
 USER mitgcm
-ENV USER_HOME_DIR /home/mitgcm
+ENV USER_HOME_DIR=/home/mitgcm
 WORKDIR /home/mitgcm
 
 # Copy the entire MITgcm directory into the container

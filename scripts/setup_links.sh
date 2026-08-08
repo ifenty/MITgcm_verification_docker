@@ -141,8 +141,8 @@ SCRIPT_FILES=(
     "run_interactive.sh"
 )
 
-# Files to link from root directory
-ROOT_FILES=(
+# Files to copy from root directory (Docker doesn't follow symlinks for -f flag)
+COPY_FILES=(
     "Dockerfile"
 )
 
@@ -167,18 +167,22 @@ for file in "${SCRIPT_FILES[@]}"; do
     fi
 done
 
-# Create symlinks for root files
-for file in "${ROOT_FILES[@]}"; do
+# Copy files that need to be actual files (not symlinks)
+for file in "${COPY_FILES[@]}"; do
     SOURCE="$REPO_DIR/$file"
     DEST="$TARGET_DIR/$file"
 
-    if [ -L "$DEST" ]; then
-        echo "  ✓ $file (already linked)"
+    if [ -f "$DEST" ] && ! [ -L "$DEST" ]; then
+        echo "  ✓ $file (already copied)"
+    elif [ -L "$DEST" ]; then
+        echo "  ↻ $file (replacing symlink with copy)"
+        rm "$DEST"
+        cp "$SOURCE" "$DEST"
     elif [ -e "$DEST" ]; then
         echo "  ⚠ $file (exists, skipping)"
     else
-        ln -s "$SOURCE" "$DEST"
-        echo "  ✓ $file"
+        cp "$SOURCE" "$DEST"
+        echo "  ✓ $file (copied)"
     fi
 done
 
