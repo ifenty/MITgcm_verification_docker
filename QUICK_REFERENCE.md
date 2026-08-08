@@ -34,6 +34,10 @@ docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Docker
 # Run with MPI (N processes)
 ./run_no_compile.sh <experiment> <input_dir> -mpi N
 
+# Compare results against reference
+./compare_results.sh <experiment>
+./compare_results.sh <experiment> <output_dir> --match N
+
 # Full verification test
 ./build_and_run.sh
 
@@ -53,6 +57,9 @@ docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Docker
 ./run_no_compile.sh 1D_ocean_ice_column
 ./run_no_compile.sh 1D_ocean_ice_column input_custom
 ./run_no_compile.sh 1D_ocean_ice_column input_scenario2
+
+# Compare results
+./compare_results.sh 1D_ocean_ice_column
 ```
 
 **MPI:**
@@ -63,6 +70,9 @@ docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Docker
 # Run with MPI
 ./run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
 ./run_no_compile.sh tutorial_global_oce_latlon input -mpi 8
+
+# Compare results
+./compare_results.sh tutorial_global_oce_latlon
 ```
 
 ## Parallelization
@@ -170,6 +180,30 @@ uname -m
 
 # Docker includes OpenMPI: mpicc, mpif77, mpif90, mpirun
 ```
+
+## Result Comparison
+
+```bash
+# Compare output against reference results
+./compare_results.sh 1D_ocean_ice_column
+
+# Compare with custom output directory
+./compare_results.sh 1D_ocean_ice_column output_custom
+
+# Adjust matching threshold (default: 13 digits)
+./compare_results.sh 1D_ocean_ice_column --match 10  # More lenient
+./compare_results.sh 1D_ocean_ice_column --match 16  # More strict
+
+# Exit codes:
+#   0 = PASS (sufficient digit agreement)
+#   1 = FAIL (insufficient agreement or missing files)
+```
+
+**How it works:**
+- Extracts `%MON` lines from both reference and output files
+- Compares numerical values digit-by-digit (same as `testreport`)
+- Reports matching digits (typically 13-16 for exact match)
+- PASS if matching digits ≥ threshold
 
 ## Key Insight
 

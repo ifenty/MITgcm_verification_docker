@@ -139,6 +139,7 @@ SCRIPT_FILES=(
     "run_no_compile.sh"
     "build_and_run.sh"
     "run_interactive.sh"
+    "compare_results.sh"
 )
 
 # Files to copy from root directory (Docker doesn't follow symlinks for -f flag)

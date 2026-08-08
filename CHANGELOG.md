@@ -1,5 +1,42 @@
 # Changelog
 
+## v2.2.0 - 2026-08-08
+
+### New Features
+
+**Result Comparison Tool:**
+- Added `compare_results.sh` script to verify output matches reference results
+- Extracts monitor statistics (`%MON` lines) from output files
+- Compares numerical values digit-by-digit using same algorithm as `testreport`
+- Reports matching digits and PASS/FAIL status
+- Default threshold: 13 matching digits (configurable with `--match N`)
+- Exit code 0 for PASS, 1 for FAIL
+
+**Bug Fixes:**
+- Fixed Dockerfile ENV syntax warning (use `=` instead of space)
+- Changed `setup_links.sh` to copy Dockerfile instead of symlinking
+  - Docker's `-f` flag doesn't follow symlinks outside build context
+- Removed hardcoded `--platform linux/arm64` from scripts
+  - Docker now automatically uses native platform (ARM64 or x86_64)
+
+**Documentation:**
+- Updated README and QUICK_REFERENCE with result comparison examples
+- Added "Comparing Results Against Reference" section in README
+- Added "Result Comparison" section in QUICK_REFERENCE
+- Changed "Four Main Scripts" to "Five Main Scripts"
+
+### Usage
+
+```bash
+# Run and compare against reference
+./run_no_compile.sh 1D_ocean_ice_column
+./compare_results.sh 1D_ocean_ice_column
+
+# Custom matching threshold
+./compare_results.sh 1D_ocean_ice_column --match 10  # More lenient
+./compare_results.sh 1D_ocean_ice_column --match 16  # More strict
+```
+
 ## v2.1.0 - 2026-08-08
 
 ### New Features

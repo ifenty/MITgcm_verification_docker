@@ -92,6 +92,9 @@ docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Docker
 # Run
 ./run_no_compile.sh 1D_ocean_ice_column
 
+# Compare against reference results
+./compare_results.sh 1D_ocean_ice_column
+
 # View results
 less 1D_ocean_ice_column/output_docker/output.txt
 ```
@@ -103,6 +106,9 @@ less 1D_ocean_ice_column/output_docker/output.txt
 
 # Run with 4 MPI processes
 ./run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
+
+# Compare against reference results
+./compare_results.sh tutorial_global_oce_latlon
 
 # View results
 less tutorial_global_oce_latlon/output_docker/output.txt
@@ -140,12 +146,13 @@ vim 1D_ocean_ice_column/input_custom/data
 
 **Key insight:** Input parameter changes (namelist files, forcing data, etc.) don't require recompilation. Only recompile when you modify Fortran source code.
 
-## Four Main Scripts
+## Five Main Scripts
 
 | Script | Purpose | Time | Usage |
 |--------|---------|------|-------|
 | `docker_compile_only.sh` | Compile experiment | 2-4 min | `./docker_compile_only.sh <exp> [-mpi] [-j N]` |
 | `run_no_compile.sh` | Run with existing binary | ~30 sec | `./run_no_compile.sh <exp> [input_dir] [-mpi N]` |
+| `compare_results.sh` | Compare against reference | ~1 sec | `./compare_results.sh <exp> [output_dir] [--match N]` |
 | `build_and_run.sh` | Full verification test | ~5 min | `./build_and_run.sh` |
 | `run_interactive.sh` | Interactive shell | N/A | `./run_interactive.sh <exp>` |
 
@@ -286,6 +293,37 @@ The Docker image includes:
 - Use `-mpi N` where N matches your experiment's tile configuration
 - Docker runs on a single host (multi-node MPI not supported)
 - MPI optfiles (e.g., `linux_arm64_gfortran+mpi`) must exist in MITgcm's `tools/build_options/`
+
+## Comparing Results Against Reference
+
+Each verification experiment includes reference results in `results/output.txt`. Use `compare_results.sh` to verify your output matches the reference:
+
+```bash
+# Run and compare
+./run_no_compile.sh 1D_ocean_ice_column
+./compare_results.sh 1D_ocean_ice_column
+
+# Output shows:
+#   Matching digits: 16
+#   Required:        13
+#   Status:          ✓ PASS
+```
+
+**How it works:**
+- Extracts monitor output statistics (`%MON` lines) from both files
+- Compares numerical values digit-by-digit (same algorithm as MITgcm's `testreport`)
+- Reports number of matching digits
+- Default requirement: 13 digits (adjustable with `--match N`)
+
+**Pass/Fail criteria:**
+- **PASS (13+ digits):** Numerical differences within acceptable roundoff error
+- **FAIL (<13 digits):** May indicate compiler differences, parameter changes, or code modifications
+
+**Custom matching threshold:**
+```bash
+./compare_results.sh 1D_ocean_ice_column --match 10  # More lenient (10 digits)
+./compare_results.sh 1D_ocean_ice_column --match 16  # More strict (16 digits)
+```
 
 ## Common Workflows
 
