@@ -44,8 +44,8 @@ if [ -z "$EXPERIMENT" ]; then
     exit 1
 fi
 
-REFERENCE_FILE="$SCRIPT_DIR/$EXPERIMENT/results/output.txt"
-OUTPUT_FILE="$SCRIPT_DIR/$EXPERIMENT/$OUTPUT_DIR/output.txt"
+REFERENCE_FILE="./$EXPERIMENT/results/output.txt"
+OUTPUT_FILE="./$EXPERIMENT/$OUTPUT_DIR/output.txt"
 
 if [ ! -f "$REFERENCE_FILE" ]; then
     echo "=========================================="

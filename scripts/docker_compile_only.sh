@@ -74,15 +74,8 @@ if [ ! -d "$SCRIPT_DIR/$EXPERIMENT" ]; then
     exit 1
 fi
 
-# Determine optfile based on MPI flag
-if [ "$USE_MPI" = true ]; then
-    # Try to find MPI optfile, fallback to regular if not found
-    OPTFILE="linux_arm64_gfortran+mpi"
-    # Check if MPI optfile exists, otherwise use regular
-    # (will be checked inside Docker)
-else
-    OPTFILE="linux_arm64_gfortran"
-fi
+# Determine optfile (ARM64 optfile handles MPI via environment variable, not separate file)
+OPTFILE="linux_arm64_gfortran"
 
 echo "=========================================="
 echo "Compiling MITgcm (NO RUN)"
@@ -115,13 +108,17 @@ docker run --rm \
 
     echo '==> Running testreport to compile with -j $MAKE_JOBS...'
 
-    # Check if optfile exists, fallback if needed
-    if [ ! -f ../tools/build_options/$OPTFILE ]; then
-        echo 'WARNING: MPI optfile not found, trying without +mpi suffix'
-        OPTFILE=\${OPTFILE%+mpi}
+    # Build testreport command with optional MPI flag
+    TESTREPORT_CMD=\"./testreport -t $EXPERIMENT -optfile ../tools/build_options/$OPTFILE -j $MAKE_JOBS\"
+
+    if [ \"$USE_MPI\" = true ]; then
+        export MPI_INC_DIR=/usr/lib/aarch64-linux-gnu/openmpi/include
+        TESTREPORT_CMD=\"\$TESTREPORT_CMD -mpi\"
+        echo '==> MPI enabled: using testreport -mpi flag'
+        echo '==> MPI_INC_DIR='\$MPI_INC_DIR
     fi
 
-    ./testreport -t $EXPERIMENT -optfile ../tools/build_options/$OPTFILE -j $MAKE_JOBS > /tmp/testreport.log 2>&1
+    \$TESTREPORT_CMD > /tmp/testreport.log 2>&1
 
     if [ ! -f $EXPERIMENT/build/mitgcmuv ]; then
         echo 'ERROR: Compilation failed!'

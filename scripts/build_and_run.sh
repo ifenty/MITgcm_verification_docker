@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Helper script to build and run MITgcm 1D_ocean_ice_column verification test in Docker
+# Helper script to build and run the Docker
 #
 
 set -e
@@ -13,10 +13,8 @@ cd "$MITGCM_ROOT"
 docker build -t mitgcm:latest -f verification/Dockerfile .
 
 echo ""
-echo "Running MITgcm 1D_ocean_ice_column verification test..."
+echo "Running the Docker image (like logging in)..."
 docker run --rm -it \
     --platform linux/arm64 \
     mitgcm:latest
 
-echo ""
-echo "Test complete!"
