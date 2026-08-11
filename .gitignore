@@ -1,0 +1,16 @@
+# Claude Code files
+.claude/
+CLAUDE.md
+ARCHITECT.md
+BUILDER.md
+REVIEWER.md
+manifest.md
+new-setup.md
+handoff/
+
+# Temporary files
+_temp/
+*.tar.gz
+
+# OS files
+.DS_Store
