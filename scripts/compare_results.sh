@@ -137,7 +137,6 @@ awk 'BEGIN { line = 0 }
     }
 }
 END {
-    getline < "/tmp/output_mon_'$$'.txt"
     for (i = 0; i < line; i++) {
         getline < "/tmp/output_mon_'$$'.txt"
         out_val = $NF
