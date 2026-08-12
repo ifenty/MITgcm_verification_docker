@@ -17,32 +17,32 @@ docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Docker
 
 ```bash
 # Compile with default parallelization
-./docker_compile_only.sh <experiment>
+./experiment_compile.sh <experiment>
 
 # Compile with N parallel jobs
-./docker_compile_only.sh <experiment> -j N
+./experiment_compile.sh <experiment> -j N
 
 # Compile with MPI
-./docker_compile_only.sh <experiment> -mpi -j N
+./experiment_compile.sh <experiment> -mpi -j N
 
 # Run with default inputs
-./run_no_compile.sh <experiment>
+./experiment_run_no_compile.sh <experiment>
 
 # Run with custom inputs
-./run_no_compile.sh <experiment> <input_dir>
+./experiment_run_no_compile.sh <experiment> <input_dir>
 
 # Run with MPI (N processes)
-./run_no_compile.sh <experiment> <input_dir> -mpi N
+./experiment_run_no_compile.sh <experiment> <input_dir> -mpi N
 
 # Compare results against reference
 ./compare_results.sh <experiment>
 ./compare_results.sh <experiment> <output_dir> --match N
 
-# Full verification test
-./build_and_run.sh
+# Build Docker image
+./docker_build.sh
 
 # Interactive Docker shell
-./run_interactive.sh <experiment>
+./docker_run_interactive.sh <experiment>
 ```
 
 ## Examples
@@ -50,13 +50,13 @@ docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Docker
 **Non-MPI:**
 ```bash
 # Compile
-./docker_compile_only.sh 1D_ocean_ice_column -j 8
-./docker_compile_only.sh tutorial_barotropic_gyre -j 8
+./experiment_compile.sh 1D_ocean_ice_column -j 8
+./experiment_compile.sh tutorial_barotropic_gyre -j 8
 
 # Run multiple times with different inputs
-./run_no_compile.sh 1D_ocean_ice_column
-./run_no_compile.sh 1D_ocean_ice_column input_custom
-./run_no_compile.sh 1D_ocean_ice_column input_scenario2
+./experiment_run_no_compile.sh 1D_ocean_ice_column
+./experiment_run_no_compile.sh 1D_ocean_ice_column input_custom
+./experiment_run_no_compile.sh 1D_ocean_ice_column input_scenario2
 
 # Compare results
 ./compare_results.sh 1D_ocean_ice_column
@@ -65,11 +65,11 @@ docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Docker
 **MPI:**
 ```bash
 # Compile with MPI
-./docker_compile_only.sh tutorial_global_oce_latlon -mpi -j 8
+./experiment_compile.sh tutorial_global_oce_latlon -mpi -j 8
 
 # Run with MPI
-./run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
-./run_no_compile.sh tutorial_global_oce_latlon input -mpi 8
+./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
+./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 8
 
 # Compare results
 ./compare_results.sh tutorial_global_oce_latlon
@@ -89,7 +89,7 @@ docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Docker
 ```
 <experiment>/
 ├── build_docker/mitgcmuv     # Master copy with build artifacts
-└── output_docker/mitgcmuv    # Runtime copy (used by run_no_compile.sh)
+└── output_docker/mitgcmuv    # Runtime copy (used by experiment_run_no_compile.sh)
 ```
 
 ## Output Files
@@ -119,27 +119,27 @@ docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Docker
 **Non-MPI:**
 ```bash
 # Compile once
-./docker_compile_only.sh 1D_ocean_ice_column -j 8
+./experiment_compile.sh 1D_ocean_ice_column -j 8
 
 # Create input variants
 cp -r 1D_ocean_ice_column/input 1D_ocean_ice_column/input_custom
 vim 1D_ocean_ice_column/input_custom/data
 
 # Run many times (no recompilation)
-./run_no_compile.sh 1D_ocean_ice_column input_custom
+./experiment_run_no_compile.sh 1D_ocean_ice_column input_custom
 vim 1D_ocean_ice_column/input_custom/data
-./run_no_compile.sh 1D_ocean_ice_column input_custom
+./experiment_run_no_compile.sh 1D_ocean_ice_column input_custom
 ```
 
 **MPI:**
 ```bash
 # Compile once with MPI
-./docker_compile_only.sh tutorial_global_oce_latlon -mpi -j 8
+./experiment_compile.sh tutorial_global_oce_latlon -mpi -j 8
 
 # Run with different MPI process counts (no recompilation)
-./run_no_compile.sh tutorial_global_oce_latlon input -mpi 2
-./run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
-./run_no_compile.sh tutorial_global_oce_latlon input -mpi 8
+./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 2
+./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
+./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 8
 ```
 
 ## Troubleshooting
@@ -162,21 +162,21 @@ uname -m
 
 | Flag | Script | Description |
 |------|--------|-------------|
-| `-mpi` | docker_compile_only.sh | Compile with MPI support (uses MPI-enabled optfile, e.g., linux_arm64_gfortran+mpi) |
-| `-mpi N` | run_no_compile.sh | Run with N MPI processes (uses mpirun) |
+| `-mpi` | experiment_compile.sh | Compile with MPI support (uses MPI-enabled optfile, e.g., linux_arm64_gfortran+mpi) |
+| `-mpi N` | experiment_run_no_compile.sh | Run with N MPI processes (uses mpirun) |
 
 ## MPI Support
 
 ```bash
 # Compile with MPI
-./docker_compile_only.sh tutorial_global_oce_latlon -mpi -j 8
+./experiment_compile.sh tutorial_global_oce_latlon -mpi -j 8
 
 # Run with MPI (4 processes)
-./run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
+./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
 
 # Run with different process counts (no recompilation!)
-./run_no_compile.sh tutorial_global_oce_latlon input -mpi 2
-./run_no_compile.sh tutorial_global_oce_latlon input -mpi 8
+./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 2
+./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 8
 
 # Docker includes OpenMPI: mpicc, mpif77, mpif90, mpirun
 ```

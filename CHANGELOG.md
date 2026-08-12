@@ -1,5 +1,44 @@
 # Changelog
 
+## v2.3.0 - 2026-08-11
+
+### Script Renaming (Simplified)
+
+**Improved Naming:**
+- Shortened script names for better usability
+- Removed redundant "_only" suffixes
+
+**Renamed Scripts:**
+- `experiment_compile_only.sh` → `experiment_compile.sh`
+- `run_experiment_only_no_compile.sh` → `experiment_run_no_compile.sh`
+
+**Backward Compatibility:**
+- Symlink `docker_compile_only.sh` now points to `experiment_compile.sh`
+- Updated `setup_links.sh` to use new names
+
+**Documentation:**
+- Updated all references in README.md, QUICK_REFERENCE.md, CHANGELOG.md
+- Updated help text in renamed scripts
+- Updated example commands in setup_links.sh
+
+### Migration Guide
+
+```bash
+# Old names
+./experiment_compile_only.sh 1D_ocean_ice_column -j 8
+./run_experiment_only_no_compile.sh 1D_ocean_ice_column
+
+# New names (cleaner)
+./experiment_compile.sh 1D_ocean_ice_column -j 8
+./experiment_run_no_compile.sh 1D_ocean_ice_column
+```
+
+**Previous v2.3.0 Renaming (2026-08-11 earlier):**
+- `docker_compile_only.sh` → `experiment_compile_only.sh`
+- `run_no_compile.sh` → `run_experiment_only_no_compile.sh`
+- `run_interactive.sh` → `docker_run_interactive.sh`
+- `build_and_run_docker.sh` → `docker_build.sh`
+
 ## v2.2.0 - 2026-08-08
 
 ### New Features

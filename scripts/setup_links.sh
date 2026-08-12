@@ -135,10 +135,10 @@ echo ""
 
 # Files to link from scripts directory
 SCRIPT_FILES=(
-    "docker_compile_only.sh"
-    "run_no_compile.sh"
-    "build_and_run.sh"
-    "run_interactive.sh"
+    "experiment_compile.sh"
+    "experiment_run_no_compile.sh"
+    "docker_build.sh"
+    "docker_run_interactive.sh"
     "compare_results.sh"
 )
 
@@ -169,18 +169,23 @@ for file in "${SCRIPT_FILES[@]}"; do
 done
 
 # Copy files that need to be actual files (not symlinks)
+# These files are always overwritten to ensure they're up-to-date
 for file in "${COPY_FILES[@]}"; do
     SOURCE="$REPO_DIR/$file"
     DEST="$TARGET_DIR/$file"
 
-    if [ -f "$DEST" ] && ! [ -L "$DEST" ]; then
-        echo "  ✓ $file (already copied)"
-    elif [ -L "$DEST" ]; then
-        echo "  ↻ $file (replacing symlink with copy)"
-        rm "$DEST"
+    if [ ! -f "$SOURCE" ]; then
+        echo "  ✗ $file (source not found: $SOURCE)"
+        echo ""
+        echo "Error: Required file not found in repository: $file"
+        echo "Expected location: $SOURCE"
+        exit 1
+    fi
+
+    if [ -e "$DEST" ]; then
+        rm -f "$DEST"
         cp "$SOURCE" "$DEST"
-    elif [ -e "$DEST" ]; then
-        echo "  ⚠ $file (exists, skipping)"
+        echo "  ↻ $file (updated)"
     else
         cp "$SOURCE" "$DEST"
         echo "  ✓ $file (copied)"
@@ -218,19 +223,15 @@ echo "Next steps:"
 echo ""
 echo "1. Build Docker image:"
 echo "   cd $TARGET_DIR"
-if [ "$OPTFILE" != "none" ]; then
-    echo "   docker build -t mitgcm:latest --build-arg OPTFILE=$OPTFILE -f Dockerfile ../"
-else
-    echo "   docker build -t mitgcm:latest -f Dockerfile ../"
-fi
+echo "   ./docker_build.sh"
 echo ""
 
 if [ "$OPTFILE" != "none" ]; then
     echo "2. Compile an experiment:"
-    echo "   ./docker_compile_only.sh 1D_ocean_ice_column -j 8"
+    echo "   ./experiment_compile.sh 1D_ocean_ice_column -j 8"
     echo ""
     echo "3. Run the model:"
-    echo "   ./run_no_compile.sh 1D_ocean_ice_column"
+    echo "   ./experiment_run_no_compile.sh 1D_ocean_ice_column"
 else
     echo "2. You'll need to specify a build options file manually when compiling."
     echo "   See: ../tools/build_options/ for available options"

@@ -8,7 +8,22 @@ set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 MITGCM_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# Detect architecture
+ARCH=$(uname -m)
+if [[ "$ARCH" == "arm64" || "$ARCH" == "aarch64" ]]; then
+    PLATFORM="linux/arm64"
+    OPTFILE="linux_arm64_gfortran"
+elif [[ "$ARCH" == "x86_64" || "$ARCH" == "amd64" ]]; then
+    PLATFORM="linux/amd64"
+    OPTFILE="linux_amd64_gfortran"
+else
+    echo "Warning: Unknown architecture $ARCH, defaulting to linux/amd64"
+    PLATFORM="linux/amd64"
+    OPTFILE="linux_amd64_gfortran"
+fi
+
 echo "Starting interactive Docker container for MITgcm..."
+echo "Architecture: $ARCH -> $PLATFORM"
 cd "$MITGCM_ROOT"
 
 # Build image if it doesn't exist
@@ -22,11 +37,11 @@ echo "Starting interactive bash shell..."
 echo "You are in: /home/mitgcm/MITgcm/verification"
 echo ""
 echo "To run the test manually:"
-echo "  ./testreport -t 1D_ocean_ice_column -optfile ../tools/build_options/linux_amd64_gfortran"
+echo "  ./testreport -t 1D_ocean_ice_column -optfile ../tools/build_options/$OPTFILE"
 echo ""
 echo "Or to build manually:"
 echo "  cd 1D_ocean_ice_column/build"
-echo "  ../../../tools/genmake2 -mods=../code -optfile=../../../tools/build_options/linux_amd64_gfortran"
+echo "  ../../../tools/genmake2 -mods=../code -optfile=../../../tools/build_options/$OPTFILE"
 echo "  make depend"
 echo "  make"
 echo "  cd ../run"
@@ -36,6 +51,6 @@ echo "  ./mitgcmuv"
 echo ""
 
 docker run --rm -it \
-    --platform linux/arm64 \
+    --platform $PLATFORM \
     mitgcm:latest \
     /bin/bash

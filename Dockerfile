@@ -1,7 +1,8 @@
 FROM debian:bookworm-slim
 
-# Build argument for optfile (default: ARM64)
+# Build arguments for optfile and MPI architecture (defaults: ARM64 for backward compatibility)
 ARG OPTFILE=linux_arm64_gfortran
+ARG MPI_ARCH=aarch64-linux-gnu
 
 # Use bash as the default shell
 SHELL ["/bin/bash", "-c"]
@@ -48,7 +49,8 @@ WORKDIR /home/mitgcm/MITgcm/verification
 ENV NETCDF_ROOT=/usr
 ENV PATH=/home/mitgcm/MITgcm/tools:$PATH
 ENV OPTFILE=${OPTFILE}
-ENV MPI_INC_DIR=/usr/lib/x86_64-linux-gnu/openmpi/include
+ENV MPI_INC_DIR=/usr/lib/${MPI_ARCH}/openmpi/include
+ENV MPIINCLUDEDIR=/usr/lib/${MPI_ARCH}/openmpi/include
 
 # Default command: interactive bash shell
 # Users specify experiment when running docker_compile_only.sh or run_no_compile.sh

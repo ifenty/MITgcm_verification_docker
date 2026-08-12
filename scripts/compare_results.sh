@@ -15,6 +15,42 @@
 set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Check for help first
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    echo "Usage: $0 <experiment_name> [output_dir] [--match N]"
+    echo ""
+    echo "Compare MITgcm output against reference results"
+    echo ""
+    echo "Options:"
+    echo "  output_dir    Output directory to compare (default: output_docker)"
+    echo "  --match N     Minimum matching digits required for PASS (default: 13)"
+    echo ""
+    echo "Examples:"
+    echo "  $0 1D_ocean_ice_column                    # Compare output_docker"
+    echo "  $0 1D_ocean_ice_column output_docker_mpi # Compare MPI output"
+    echo "  $0 lab_sea output_docker --match 12      # Require 12 digits"
+    echo ""
+    echo "Returns:"
+    echo "  0 = PASS (sufficient digit agreement)"
+    echo "  1 = FAIL (insufficient agreement or missing files)"
+    echo ""
+    exit 0
+fi
+
+if [ -z "$1" ] || [[ "$1" == -* ]]; then
+    echo "Error: experiment name is required"
+    echo ""
+    echo "Usage: $0 <experiment_name> [output_dir] [--match N]"
+    echo ""
+    echo "Example:"
+    echo "  $0 1D_ocean_ice_column"
+    echo "  $0 1D_ocean_ice_column output_docker --match 13"
+    echo ""
+    echo "Try '$0 --help' for more information"
+    exit 1
+fi
+
 EXPERIMENT="${1}"
 OUTPUT_DIR="${2:-output_docker}"
 MATCH_DIGITS=13
@@ -29,20 +65,12 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: ./compare_results.sh <experiment> [output_dir] [--match N]"
+            echo "Usage: $0 <experiment_name> [output_dir] [--match N]"
+            echo "Try '$0 --help' for more information"
             exit 1
             ;;
     esac
 done
-
-if [ -z "$EXPERIMENT" ]; then
-    echo "Usage: ./compare_results.sh <experiment> [output_dir] [--match N]"
-    echo ""
-    echo "Example:"
-    echo "  ./compare_results.sh 1D_ocean_ice_column"
-    echo "  ./compare_results.sh 1D_ocean_ice_column output_docker --match 13"
-    exit 1
-fi
 
 REFERENCE_FILE="./$EXPERIMENT/results/output.txt"
 OUTPUT_FILE="./$EXPERIMENT/$OUTPUT_DIR/output.txt"

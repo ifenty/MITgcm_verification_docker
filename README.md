@@ -87,10 +87,10 @@ docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Docker
 **Non-MPI experiments:**
 ```bash
 # Compile
-./docker_compile_only.sh 1D_ocean_ice_column -j 8
+./experiment_compile.sh 1D_ocean_ice_column -j 8
 
 # Run
-./run_no_compile.sh 1D_ocean_ice_column
+./experiment_run_no_compile.sh 1D_ocean_ice_column
 
 # Compare against reference results
 ./compare_results.sh 1D_ocean_ice_column
@@ -102,10 +102,10 @@ less 1D_ocean_ice_column/output_docker/output.txt
 **MPI experiments:**
 ```bash
 # Compile with MPI
-./docker_compile_only.sh tutorial_global_oce_latlon -mpi -j 8
+./experiment_compile.sh tutorial_global_oce_latlon -mpi -j 8
 
 # Run with 4 MPI processes
-./run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
+./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
 
 # Compare against reference results
 ./compare_results.sh tutorial_global_oce_latlon
@@ -125,23 +125,23 @@ The power of this tool is separating compilation from execution:
 
 ```bash
 # Compile once (2-3 minutes)
-./docker_compile_only.sh 1D_ocean_ice_column -j 8
+./experiment_compile.sh 1D_ocean_ice_column -j 8
 
 # Create custom input parameters
 cp -r 1D_ocean_ice_column/input 1D_ocean_ice_column/input_custom
 vim 1D_ocean_ice_column/input_custom/data
 
 # Run with custom inputs (30 seconds, no recompilation!)
-./run_no_compile.sh 1D_ocean_ice_column input_custom
+./experiment_run_no_compile.sh 1D_ocean_ice_column input_custom
 less 1D_ocean_ice_column/output_docker/output.txt
 
 # Edit parameters and run again
 vim 1D_ocean_ice_column/input_custom/data
-./run_no_compile.sh 1D_ocean_ice_column input_custom
+./experiment_run_no_compile.sh 1D_ocean_ice_column input_custom
 
 # Run with different input variations
-./run_no_compile.sh 1D_ocean_ice_column input_scenario1
-./run_no_compile.sh 1D_ocean_ice_column input_scenario2
+./experiment_run_no_compile.sh 1D_ocean_ice_column input_scenario1
+./experiment_run_no_compile.sh 1D_ocean_ice_column input_scenario2
 ```
 
 **Key insight:** Input parameter changes (namelist files, forcing data, etc.) don't require recompilation. Only recompile when you modify Fortran source code.
@@ -150,11 +150,11 @@ vim 1D_ocean_ice_column/input_custom/data
 
 | Script | Purpose | Time | Usage |
 |--------|---------|------|-------|
-| `docker_compile_only.sh` | Compile experiment | 2-4 min | `./docker_compile_only.sh <exp> [-mpi] [-j N]` |
-| `run_no_compile.sh` | Run with existing binary | ~30 sec | `./run_no_compile.sh <exp> [input_dir] [-mpi N]` |
+| `experiment_compile.sh` | Compile experiment | 2-4 min | `./experiment_compile.sh <exp> [-mpi] [-j N]` |
+| `experiment_run_no_compile.sh` | Run with existing binary | ~30 sec | `./experiment_run_no_compile.sh <exp> [input_dir] [-mpi N]` |
 | `compare_results.sh` | Compare against reference | ~1 sec | `./compare_results.sh <exp> [output_dir] [--match N]` |
-| `build_and_run.sh` | Full verification test | ~5 min | `./build_and_run.sh` |
-| `run_interactive.sh` | Interactive shell | N/A | `./run_interactive.sh <exp>` |
+| `docker_build.sh` | Build Docker image | ~5 min | `./docker_build.sh` |
+| `docker_run_interactive.sh` | Interactive shell | N/A | `./docker_run_interactive.sh <exp>` |
 
 **Key flags:**
 - `-j N` - Parallel compilation with N jobs (e.g., `-j 8`)
@@ -209,12 +209,12 @@ MITgcm_verification_docker/
 ├── LICENSE                        # MIT License
 ├── Dockerfile                     # Docker image definition
 │
-├── scripts/                       # All executable scripts
-│   ├── setup_links.sh            # Setup and architecture detection
-│   ├── docker_compile_only.sh    # Compile script
-│   ├── run_no_compile.sh         # Run script
-│   ├── build_and_run.sh          # Full verification test
-│   └── run_interactive.sh        # Interactive shell
+├── scripts/                                # All executable scripts
+│   ├── setup_links.sh                     # Setup and architecture detection
+│   ├── experiment_compile.sh         # Compile script
+│   ├── experiment_run_no_compile.sh  # Run script
+│   ├── docker_build.sh            # Build Docker image
+│   └── docker_run_interactive.sh          # Interactive shell
 │
 └── docs/                          # Additional documentation
     ├── CHANGELOG.md              # Version history
@@ -242,10 +242,10 @@ Use the `-mpi` flag to compile with MPI support:
 
 ```bash
 # Compile with MPI (uses MPI-enabled optfile)
-./docker_compile_only.sh tutorial_global_oce_latlon -mpi -j 8
+./experiment_compile.sh tutorial_global_oce_latlon -mpi -j 8
 
 # Compile without MPI (default)
-./docker_compile_only.sh 1D_ocean_ice_column -j 8
+./experiment_compile.sh 1D_ocean_ice_column -j 8
 ```
 
 The `-mpi` flag automatically tries to use an MPI-enabled optfile (e.g., `linux_arm64_gfortran+mpi`). If not available, it falls back to the standard optfile.
@@ -256,27 +256,27 @@ Use the `-mpi N` flag to run with N MPI processes:
 
 ```bash
 # Run with MPI (4 processes)
-./run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
+./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
 
 # Run with MPI (8 processes)
-./run_no_compile.sh tutorial_global_oce_latlon input -mpi 8
+./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 8
 
 # Run without MPI (default)
-./run_no_compile.sh 1D_ocean_ice_column
+./experiment_run_no_compile.sh 1D_ocean_ice_column
 ```
 
 ### Complete MPI Workflow
 
 ```bash
 # 1. Compile with MPI
-./docker_compile_only.sh tutorial_global_oce_latlon -mpi -j 8
+./experiment_compile.sh tutorial_global_oce_latlon -mpi -j 8
 
 # 2. Run with 4 MPI processes
-./run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
+./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
 
 # 3. Try different process counts (no recompilation needed!)
-./run_no_compile.sh tutorial_global_oce_latlon input -mpi 2
-./run_no_compile.sh tutorial_global_oce_latlon input -mpi 8
+./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 2
+./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 8
 ```
 
 ### MPI Environment
@@ -300,7 +300,7 @@ Each verification experiment includes reference results in `results/output.txt`.
 
 ```bash
 # Run and compare
-./run_no_compile.sh 1D_ocean_ice_column
+./experiment_run_no_compile.sh 1D_ocean_ice_column
 ./compare_results.sh 1D_ocean_ice_column
 
 # Output shows:
@@ -331,7 +331,7 @@ Each verification experiment includes reference results in `results/output.txt`.
 
 ```bash
 # Compile once
-./docker_compile_only.sh 1D_ocean_ice_column -j 8
+./experiment_compile.sh 1D_ocean_ice_column -j 8
 
 # Create multiple input variants
 for scenario in baseline warm cold; do
@@ -341,7 +341,7 @@ done
 
 # Run all scenarios (no recompilation)
 for scenario in baseline warm cold; do
-    ./run_no_compile.sh 1D_ocean_ice_column input_$scenario
+    ./experiment_run_no_compile.sh 1D_ocean_ice_column input_$scenario
     mv 1D_ocean_ice_column/output_docker/output.txt results_$scenario.txt
 done
 ```
@@ -350,7 +350,7 @@ done
 
 ```bash
 # Open interactive shell in Docker
-./run_interactive.sh 1D_ocean_ice_column
+./docker_run_interactive.sh 1D_ocean_ice_column
 
 # Inside Docker, you can:
 # - Run genmake2 manually
@@ -366,10 +366,10 @@ done
 ls -d */
 
 # Compile different experiment
-./docker_compile_only.sh tutorial_barotropic_gyre -j 8
+./experiment_compile.sh tutorial_barotropic_gyre -j 8
 
 # Run it
-./run_no_compile.sh tutorial_barotropic_gyre
+./experiment_run_no_compile.sh tutorial_barotropic_gyre
 ```
 
 ## Troubleshooting
@@ -406,7 +406,7 @@ docker info | grep CPUs
 
 **Solution:** Compile first
 ```bash
-./docker_compile_only.sh 1D_ocean_ice_column -j 8
+./experiment_compile.sh 1D_ocean_ice_column -j 8
 ```
 
 ### Symlinks Broken
