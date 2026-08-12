@@ -208,17 +208,18 @@ docker run --rm \
         fi
     fi
 
-    echo '==> Running testreport to compile with -j $MAKE_JOBS...'
+    echo '==> Compiling experiment with -j $MAKE_JOBS...'
 
-    # Set MPI environment variables if MPI build
-    # Note: We do NOT use -mpi flag with testreport because it overrides SIZE.h
-    # Instead, we copy SIZE.h_mpi to SIZE.h and let testreport detect MPI config
+    # Set MPI environment variables and use -mpi flag if MPI build
+    # SIZE.h_mpi has already been copied to SIZE.h above, so testreport will use it
     if [ \"$USE_MPI\" = true ]; then
+        export MPI=true
         export MPI_INC_DIR=/usr/lib/$MPI_ARCH/openmpi/include
         export MPIINCLUDEDIR=/usr/lib/$MPI_ARCH/openmpi/include
+        ./testreport -t $EXPERIMENT -optfile ../tools/build_options/$OPTFILE -mpi -j $MAKE_JOBS > /tmp/testreport.log 2>&1
+    else
+        ./testreport -t $EXPERIMENT -optfile ../tools/build_options/$OPTFILE -j $MAKE_JOBS > /tmp/testreport.log 2>&1
     fi
-
-    ./testreport -t $EXPERIMENT -optfile ../tools/build_options/$OPTFILE -j $MAKE_JOBS > /tmp/testreport.log 2>&1
 
     if [ ! -f $EXPERIMENT/build/mitgcmuv ]; then
         echo 'ERROR: Compilation failed!'
@@ -268,8 +269,7 @@ echo "Next step: Run the model with"
 if [ "$USE_MPI" = "true" ]; then
     if [ "$MPI_INFO" != "not_found" ]; then
         NPROCS=${MPI_INFO##*:}
-        echo "  ./experiment_run_no_compile.sh $EXPERIMENT input -mpi"
-        echo "  (with $NPROCS MPI processes, auto-detected from SIZE.h)"
+        echo "  ./experiment_run_no_compile.sh $EXPERIMENT input -mpi $NPROCS"
     else
         echo "  ./experiment_run_no_compile.sh $EXPERIMENT input -mpi"
     fi

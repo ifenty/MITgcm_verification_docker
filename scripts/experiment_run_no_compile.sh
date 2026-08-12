@@ -130,7 +130,7 @@ docker run --rm \
 
     if [ \"$USE_MPI\" = true ]; then
         echo 'Using MPI with $MPI_PROCS processes'
-        mpirun --allow-run-as-root -np $MPI_PROCS ./mitgcmuv | tee /output/output.txt
+        mpirun --allow-run-as-root --oversubscribe -np $MPI_PROCS ./mitgcmuv | tee /output/output.txt
     else
         ./mitgcmuv | tee /output/output.txt
     fi
