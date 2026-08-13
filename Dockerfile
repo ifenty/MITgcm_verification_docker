@@ -48,7 +48,7 @@ WORKDIR /home/mitgcm/MITgcm/verification
 # Set environment variables for NetCDF and MPI (installed via apt)
 ENV NETCDF_ROOT=/usr
 ENV PATH=/home/mitgcm/MITgcm/tools:$PATH
-ENV OPTFILE=${OPTFILE}
+ENV OPTFILE=/home/mitgcm/MITgcm/tools/build_options/${OPTFILE}
 ENV MPI_INC_DIR=/usr/lib/${MPI_ARCH}/openmpi/include
 ENV MPIINCLUDEDIR=/usr/lib/${MPI_ARCH}/openmpi/include
 

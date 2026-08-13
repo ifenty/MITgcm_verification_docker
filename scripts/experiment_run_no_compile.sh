@@ -14,8 +14,8 @@ set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-# Check for help first
-if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+# Check for help or no arguments
+if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
     echo "Usage: $0 <experiment_name> [input_dir] [-mpi N]"
     echo ""
     echo "Options:"
@@ -35,7 +35,7 @@ if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     exit 0
 fi
 
-if [ -z "$1" ] || [[ "$1" == -* ]]; then
+if [[ "$1" == -* ]]; then
     echo "Error: experiment name is required"
     echo ""
     echo "Usage: $0 <experiment_name> [input_dir] [-mpi N]"
@@ -49,12 +49,12 @@ if [ -z "$1" ] || [[ "$1" == -* ]]; then
 fi
 
 EXPERIMENT="$1"
-INPUT_DIR="${2:-input}"
+INPUT_DIR="input"
 USE_MPI=false
 MPI_PROCS=1
 
-# Parse optional MPI argument
-shift 2 2>/dev/null || shift $# 2>/dev/null || true
+# Parse optional arguments
+shift
 while [[ $# -gt 0 ]]; do
     case $1 in
         -mpi)
@@ -62,11 +62,16 @@ while [[ $# -gt 0 ]]; do
             MPI_PROCS="${2:-4}"
             shift 2
             ;;
-        *)
+        -*)
             echo "Unknown option: $1"
             echo "Usage: $0 <experiment_name> [input_dir] [-mpi N]"
             echo "Try '$0 --help' for more information"
             exit 1
+            ;;
+        *)
+            # First non-flag argument is input_dir
+            INPUT_DIR="$1"
+            shift
             ;;
     esac
 done

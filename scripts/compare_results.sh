@@ -16,8 +16,8 @@ set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-# Check for help first
-if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+# Check for help or no arguments
+if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
     echo "Usage: $0 <experiment_name> [output_dir] [--match N]"
     echo ""
     echo "Compare MITgcm output against reference results"
@@ -38,7 +38,7 @@ if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     exit 0
 fi
 
-if [ -z "$1" ] || [[ "$1" == -* ]]; then
+if [[ "$1" == -* ]]; then
     echo "Error: experiment name is required"
     echo ""
     echo "Usage: $0 <experiment_name> [output_dir] [--match N]"
@@ -52,22 +52,27 @@ if [ -z "$1" ] || [[ "$1" == -* ]]; then
 fi
 
 EXPERIMENT="${1}"
-OUTPUT_DIR="${2:-output_docker}"
+OUTPUT_DIR="output_docker"
 MATCH_DIGITS=13
 
-# Parse optional match argument
-shift 2 2>/dev/null || shift $# 2>/dev/null || true
+# Parse all arguments after experiment name
+shift 1
 while [[ $# -gt 0 ]]; do
     case $1 in
         --match)
             MATCH_DIGITS="$2"
             shift 2
             ;;
-        *)
+        -*)
             echo "Unknown option: $1"
             echo "Usage: $0 <experiment_name> [output_dir] [--match N]"
             echo "Try '$0 --help' for more information"
             exit 1
+            ;;
+        *)
+            # First non-option argument after experiment is output_dir
+            OUTPUT_DIR="$1"
+            shift
             ;;
     esac
 done

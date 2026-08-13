@@ -68,8 +68,8 @@ docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Docker
 ./experiment_compile.sh tutorial_global_oce_latlon -mpi -j 8
 
 # Run with MPI
-./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
-./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 8
+./experiment_run_no_compile.sh tutorial_global_oce_latlon -mpi 4
+./experiment_run_no_compile.sh tutorial_global_oce_latlon -mpi 8
 
 # Compare results
 ./compare_results.sh tutorial_global_oce_latlon
@@ -137,9 +137,9 @@ vim 1D_ocean_ice_column/input_custom/data
 ./experiment_compile.sh tutorial_global_oce_latlon -mpi -j 8
 
 # Run with different MPI process counts (no recompilation)
-./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 2
-./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
-./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 8
+./experiment_run_no_compile.sh tutorial_global_oce_latlon -mpi 2
+./experiment_run_no_compile.sh tutorial_global_oce_latlon -mpi 4
+./experiment_run_no_compile.sh tutorial_global_oce_latlon -mpi 8
 ```
 
 ## Troubleshooting
@@ -172,11 +172,11 @@ uname -m
 ./experiment_compile.sh tutorial_global_oce_latlon -mpi -j 8
 
 # Run with MPI (4 processes)
-./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 4
+./experiment_run_no_compile.sh tutorial_global_oce_latlon -mpi 4
 
 # Run with different process counts (no recompilation!)
-./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 2
-./experiment_run_no_compile.sh tutorial_global_oce_latlon input -mpi 8
+./experiment_run_no_compile.sh tutorial_global_oce_latlon -mpi 2
+./experiment_run_no_compile.sh tutorial_global_oce_latlon -mpi 8
 
 # Docker includes OpenMPI: mpicc, mpif77, mpif90, mpirun
 ```

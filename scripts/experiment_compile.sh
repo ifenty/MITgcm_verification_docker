@@ -2,12 +2,13 @@
 #
 # Compile MITgcm verification experiment (NO RUN)
 #
-# Usage: ./experiment_compile.sh <experiment_name> [-j <jobs>]
+# Usage: ./experiment_compile.sh <experiment_name> [-j <jobs>] [-mpi]
 #
 # Options:
 #   -j <jobs>   Number of parallel make jobs (default: 4)
 #               Use -j 1 for serial build
 #               Use -j 8 or -j 16 for faster builds on powerful machines
+#   -mpi        Compile with MPI support (auto-detects processes from SIZE.h_mpi)
 #
 # Output:
 #   - Build files saved to: <experiment>/build_docker/
@@ -18,7 +19,7 @@
 # Examples:
 #   ./experiment_compile.sh 1D_ocean_ice_column
 #   ./experiment_compile.sh 1D_ocean_ice_column -j 8
-#   ./experiment_compile.sh 1D_ocean_ice_column -j 1  # serial
+#   ./experiment_compile.sh tutorial_global_oce_latlon -mpi -j 8
 
 set -e
 
@@ -51,14 +52,14 @@ get_mpi_info_from_size_h() {
     echo "$npx:$npy:$total"
 }
 
-# Check for help first
-if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+# Check for help or no arguments
+if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
     echo "Usage: $0 <experiment_name> [-j <jobs>] [-mpi]"
     echo ""
     echo "Options:"
     echo "  -j <jobs>   Number of parallel make jobs (default: 4)"
     echo "              Examples: -j 1 (serial), -j 8 (fast), -j 16 (max)"
-    echo "  -mpi        Use MPI-enabled build (requires MPI optfile)"
+    echo "  -mpi        Compile with MPI support (auto-detects processes from SIZE.h_mpi)"
     echo ""
     echo "Examples:"
     echo "  $0 1D_ocean_ice_column              # Non-MPI, default -j 4"
@@ -68,7 +69,7 @@ if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     exit 0
 fi
 
-if [ -z "$1" ] || [[ "$1" == -* ]]; then
+if [[ "$1" == -* ]]; then
     echo "Error: experiment name is required"
     echo ""
     echo "Usage: $0 <experiment_name> [-j <jobs>] [-mpi]"
@@ -111,15 +112,13 @@ if [ ! -d "$SCRIPT_DIR/$EXPERIMENT" ]; then
     exit 1
 fi
 
-# Detect architecture and set appropriate optfile and MPI path
+# Detect architecture for MPI path
 ARCH=$(uname -m)
 case "$ARCH" in
     arm64|aarch64)
-        OPTFILE="linux_arm64_gfortran"
         MPI_ARCH="aarch64-linux-gnu"
         ;;
     x86_64|amd64)
-        OPTFILE="linux_amd64_gfortran"
         MPI_ARCH="x86_64-linux-gnu"
         ;;
     *)
@@ -134,7 +133,6 @@ echo "Compiling MITgcm (NO RUN)"
 echo "=========================================="
 echo "  Experiment: $EXPERIMENT"
 echo "  Arch:       $ARCH"
-echo "  Build opt:  $OPTFILE"
 echo "  MPI:        $USE_MPI"
 echo "  Make jobs:  -j $MAKE_JOBS"
 echo "=========================================="
@@ -216,13 +214,25 @@ docker run --rm \
         export MPI=true
         export MPI_INC_DIR=/usr/lib/$MPI_ARCH/openmpi/include
         export MPIINCLUDEDIR=/usr/lib/$MPI_ARCH/openmpi/include
-        ./testreport -t $EXPERIMENT -optfile ../tools/build_options/$OPTFILE -mpi -j $MAKE_JOBS > /tmp/testreport.log 2>&1
+        if ! ./testreport -t $EXPERIMENT -optfile \$OPTFILE -mpi -j $MAKE_JOBS > /tmp/testreport.log 2>&1; then
+            echo 'ERROR: testreport command failed!'
+            echo ''
+            echo 'Last 50 lines of testreport log:'
+            tail -50 /tmp/testreport.log
+            exit 1
+        fi
     else
-        ./testreport -t $EXPERIMENT -optfile ../tools/build_options/$OPTFILE -j $MAKE_JOBS > /tmp/testreport.log 2>&1
+        if ! ./testreport -t $EXPERIMENT -optfile \$OPTFILE -j $MAKE_JOBS > /tmp/testreport.log 2>&1; then
+            echo 'ERROR: testreport command failed!'
+            echo ''
+            echo 'Last 50 lines of testreport log:'
+            tail -50 /tmp/testreport.log
+            exit 1
+        fi
     fi
 
     if [ ! -f $EXPERIMENT/build/mitgcmuv ]; then
-        echo 'ERROR: Compilation failed!'
+        echo 'ERROR: Compilation failed - binary not created!'
         echo ''
         echo 'Last 50 lines of testreport log:'
         tail -50 /tmp/testreport.log
@@ -269,11 +279,11 @@ echo "Next step: Run the model with"
 if [ "$USE_MPI" = "true" ]; then
     if [ "$MPI_INFO" != "not_found" ]; then
         NPROCS=${MPI_INFO##*:}
-        echo "  ./experiment_run_no_compile.sh $EXPERIMENT input -mpi $NPROCS"
+        echo "  ./experiment_run_no_compile.sh $EXPERIMENT -mpi $NPROCS"
     else
-        echo "  ./experiment_run_no_compile.sh $EXPERIMENT input -mpi"
+        echo "  ./experiment_run_no_compile.sh $EXPERIMENT -mpi"
     fi
 else
-    echo "  ./experiment_run_no_compile.sh $EXPERIMENT input"
+    echo "  ./experiment_run_no_compile.sh $EXPERIMENT"
 fi
 echo ""
