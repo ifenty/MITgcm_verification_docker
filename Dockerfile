@@ -1,7 +1,6 @@
 FROM debian:bookworm-slim
 
-# Build arguments for optfile and MPI architecture (defaults: ARM64 for backward compatibility)
-ARG OPTFILE=linux_arm64_gfortran
+# Build arguments for MPI architecture (defaults: ARM64 for backward compatibility)
 ARG MPI_ARCH=aarch64-linux-gnu
 
 # Use bash as the default shell
@@ -39,19 +38,17 @@ USER mitgcm
 ENV USER_HOME_DIR=/home/mitgcm
 WORKDIR /home/mitgcm
 
-# Copy the entire MITgcm directory into the container
-# This includes all source code and build options in tools/build_options/
-COPY --chown=mitgcm:mitgcm . /home/mitgcm/MITgcm
-
-WORKDIR /home/mitgcm/MITgcm/verification
+# MITgcm will be mounted at runtime at /mitgcm
+# This allows users to modify source code without rebuilding the Docker image
+ENV MITGCM_ROOT=/mitgcm
+WORKDIR /mitgcm/verification
 
 # Set environment variables for NetCDF and MPI (installed via apt)
 ENV NETCDF_ROOT=/usr
-ENV PATH=/home/mitgcm/MITgcm/tools:$PATH
-ENV OPTFILE=/home/mitgcm/MITgcm/tools/build_options/${OPTFILE}
+ENV PATH=/mitgcm/tools:$PATH
 ENV MPI_INC_DIR=/usr/lib/${MPI_ARCH}/openmpi/include
 ENV MPIINCLUDEDIR=/usr/lib/${MPI_ARCH}/openmpi/include
 
 # Default command: interactive bash shell
-# Users specify experiment when running docker_compile_only.sh or run_no_compile.sh
+# Users specify experiment when running experiment_compile.sh or experiment_run_no_compile.sh
 CMD ["/bin/bash"]

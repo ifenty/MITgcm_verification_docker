@@ -10,7 +10,7 @@ cd MITgcm_verification_docker
 ./scripts/setup_links.sh /path/to/MITgcm/verification
 
 cd /path/to/MITgcm/verification
-docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Dockerfile ../
+./docker_build.sh  # Auto-detects architecture and builds image
 ```
 
 ## Core Commands
@@ -24,6 +24,15 @@ docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Docker
 
 # Compile with MPI
 ./experiment_compile.sh <experiment> -mpi -j N
+
+# Compile with custom code directory
+./experiment_compile.sh <experiment> -mods <path/to/code_dir> -j N
+
+# Compile with custom output directory
+./experiment_compile.sh <experiment> -output <output_dir> -j N
+
+# Compile with clean build (force full rebuild)
+./experiment_compile.sh <experiment> -clean -j N
 
 # Run with default inputs
 ./experiment_run_no_compile.sh <experiment>
@@ -61,6 +70,17 @@ docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Docker
 # Compare results
 ./compare_results.sh 1D_ocean_ice_column
 ```
+
+**Custom Code (using -mods):**
+```bash
+# Compile with custom code (absolute path required)
+./experiment_compile.sh lab_sea -mods /path/to/custom/code -j 8
+
+# Run normally
+./experiment_run_no_compile.sh lab_sea
+```
+
+**Note:** `-mods` requires an absolute path.
 
 **MPI:**
 ```bash
@@ -104,14 +124,20 @@ docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Docker
 
 ## Architecture-Specific Setup
 
+**Note:** The `docker_build.sh` script automatically detects your architecture. Manual build is rarely needed.
+
 ```bash
 # ARM64 (Apple Silicon, ARM servers)
 ./scripts/setup_links.sh /path/to/verification linux_arm64_gfortran
-docker build -t mitgcm:latest --build-arg OPTFILE=linux_arm64_gfortran -f Dockerfile ../
+./scripts/docker_build.sh
 
 # x86_64 (Intel/AMD)
 ./scripts/setup_links.sh /path/to/verification linux_amd64_gfortran
-docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran -f Dockerfile ../
+./scripts/docker_build.sh
+
+# Manual build (if needed)
+docker build -t mitgcm:latest --build-arg MPI_ARCH=aarch64-linux-gnu -f Dockerfile .  # ARM64
+docker build -t mitgcm:latest --build-arg MPI_ARCH=x86_64-linux-gnu -f Dockerfile .    # x86_64
 ```
 
 ## Workflow Patterns

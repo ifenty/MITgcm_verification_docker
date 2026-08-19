@@ -1,6 +1,6 @@
-# MITgcm Docker Tools
+# MITgcm Verification Docker Tools
 
-Docker-based workflow for compiling and running MITgcm verification experiments on multiple architectures.
+Docker-based workflow for compiling and running MITgcm verification experiments on multiple architectures. The code framework can be adapted to compile and run custom MITgcm configurations.
 
 **MITgcm Resources:**
 - [Getting Started with MITgcm](https://mitgcm.readthedocs.io/en/latest/getting_started/getting_started.html)
@@ -112,6 +112,17 @@ docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran --build-a
 less 1D_ocean_ice_column/output_docker/output.txt
 ```
 
+**With custom code modifications:**
+```bash
+# Compile with custom code directory (MUST use absolute path)
+./experiment_compile.sh lab_sea -mods /path/to/custom/code -j 4
+
+# Run
+./experiment_run_no_compile.sh lab_sea
+```
+
+**Note:** The `-mods` flag requires an absolute path. Relative paths will be rejected with an error.
+
 **MPI experiments:**
 ```bash
 # Compile with MPI (adjust -j to match your CPU count)
@@ -163,7 +174,7 @@ vim 1D_ocean_ice_column/input_custom/data
 
 | Script | Purpose | Time | Usage |
 |--------|---------|------|-------|
-| `experiment_compile.sh` | Compile experiment | 2-4 min | `./experiment_compile.sh <experiment> [-j N] [-mpi]` |
+| `experiment_compile.sh` | Compile experiment | 2-4 min | `./experiment_compile.sh <experiment> [-j N] [-mpi] [-mods <dir>] [-output <dir>]` |
 | `experiment_run_no_compile.sh` | Run with existing binary | ~30 sec | `./experiment_run_no_compile.sh <experiment> [input_dir] [-mpi N]` |
 | `compare_results.sh` | Compare against reference | ~1 sec | `./compare_results.sh <experiment> [output_dir] [--match N]` |
 | `docker_build.sh` | Build Docker image | ~5 min | `./docker_build.sh` |
@@ -173,6 +184,9 @@ vim 1D_ocean_ice_column/input_custom/data
 - `-j N` - Parallel compilation with N jobs (match to your CPU count: `-j 2`, `-j 4`, `-j 8`, etc.)
 - `-mpi` (compile) - Compile with MPI support (auto-detects processes from SIZE.h_mpi)
 - `-mpi N` (run) - Run with N MPI processes (uses mpirun)
+- `-mods <dir>` (compile) - Use custom code from specified directory (MUST be absolute path)
+- `-output <dir>` (compile) - Output directory name (default: `output_docker`)
+- `-clean` (compile) - Force clean build (otherwise uses incremental compilation)
 - `input_dir` - Optional input directory (defaults to `input` if not specified)
 
 ## Compilation Speed
@@ -237,9 +251,13 @@ MITgcm_verification_docker/
 
 1. **Symlink Integration:** Scripts are symlinked into your MITgcm `verification/` directory
 2. **Docker Environment:** Provides consistent Linux environment with gfortran + NetCDF
-3. **MITgcm Build Options:** Docker image includes full path to optfiles via `OPTFILE` environment variable
-4. **Volume Mounts:** Persistent storage for binaries and outputs on your host machine
-5. **Architecture Detection:** Automatically selects correct compiler options for ARM64 or x86_64
+3. **Mount-Based Architecture:** MITgcm source is **mounted** (not copied) into the Docker container at runtime
+   - Allows modifying MITgcm source code without rebuilding Docker image
+   - Changes to code take effect immediately on next compile
+   - Custom code directories can be specified via `-mods` flag
+4. **MITgcm Build Options:** Docker image includes full path to optfiles via `OPTFILE` environment variable
+5. **Volume Mounts:** Persistent storage for binaries and outputs on your host machine
+6. **Architecture Detection:** Automatically selects correct compiler options for ARM64 or x86_64
 
 The repository is separate from MITgcm source, making it easy to update independently and use with multiple MITgcm installations.
 
@@ -322,6 +340,43 @@ Each verification experiment includes reference results in `results/output.txt`.
 ./compare_results.sh 1D_ocean_ice_column --match 10  # More lenient
 ./compare_results.sh 1D_ocean_ice_column --match 16  # More strict
 ```
+
+## Custom Code Modifications
+
+The `-mods` flag allows you to compile with custom or modified MITgcm source code without changing the original MITgcm installation.
+
+### Use Cases
+- Add instrumentation for debugging or validation
+- Test modified physics routines
+- Use alternative parameterizations
+- Override experiment configuration (SIZE.h, packages.conf)
+
+### How It Works
+1. Create a directory with your custom code files (e.g., `code_validation/`)
+2. Put modified or new `.F`, `.h`, or `.conf` files in this directory
+3. Compile with `-mods` flag pointing to your custom code directory
+4. MITgcm's build system will use your files instead of the originals
+
+### Example Workflow
+
+```bash
+# Create custom code directory
+mkdir -p /path/to/project/code_validation
+
+# Add your modified files
+cp custom_kpp_calc.F /path/to/project/code_validation/kpp_calc.F
+cp custom_SIZE.h /path/to/project/code_validation/SIZE.h
+
+# Compile with custom code (absolute path required)
+./experiment_compile.sh lab_sea -mods /path/to/project/code_validation -j 8
+
+# Run normally - the binary includes your modifications
+./experiment_run_no_compile.sh lab_sea
+```
+
+**Important:** 
+- The `-mods` flag **requires an absolute path** (e.g., `/Users/...` or `/home/...`). Relative paths will be rejected.
+- The custom code directory is **mounted** into the Docker container, not copied. Changes to files in this directory are immediately available for the next compilation.
 
 ## Common Workflows
 
@@ -408,6 +463,7 @@ git pull
 ## Additional Resources
 
 - **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Command cheat sheet
+- **[UPGRADE_NOTES.md](UPGRADE_NOTES.md)** - Mount-based architecture upgrade guide
 - **`docs/`** - Detailed guides and changelog
 - **[MITgcm](https://mitgcm.org/)** - MITgcm documentation
 - **[Docker Desktop](https://docs.docker.com/desktop/)** - Docker documentation
