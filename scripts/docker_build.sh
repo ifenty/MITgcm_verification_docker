@@ -9,6 +9,17 @@
 
 set -e
 
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    echo "Usage: $0"
+    echo ""
+    echo "Build the mitgcm:latest Docker image (compilers + NetCDF + OpenMPI only;"
+    echo "MITgcm source is mounted at runtime, not baked into the image)."
+    echo ""
+    echo "Architecture (ARM64 vs x86_64) is auto-detected via 'uname -m';"
+    echo "there are no flags to set."
+    exit 0
+fi
+
 # Resolve symlink to find the actual script location
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 while [ -h "$SCRIPT_PATH" ]; do

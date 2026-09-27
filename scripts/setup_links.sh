@@ -10,13 +10,23 @@ REPO_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 TARGET_DIR="${1}"
 OPTFILE="${2}"
 
-if [ -z "$TARGET_DIR" ]; then
+if [[ "$1" == "-h" || "$1" == "--help" || -z "$TARGET_DIR" ]]; then
     echo "Usage: $0 /path/to/MITgcm/verification [optfile]"
+    echo ""
+    echo "One-time setup: symlinks this repo's scripts and README into your"
+    echo "MITgcm verification/ directory, and copies the Dockerfile there"
+    echo "(Docker needs a real file, not a symlink, as its build context)."
+    echo ""
+    echo "optfile is optional; if omitted, the architecture (ARM64/x86_64) is"
+    echo "auto-detected and a matching build-options file is suggested."
     echo ""
     echo "Example:"
     echo "  $0 /Users/username/MITgcm/verification"
     echo "  $0 /Users/username/MITgcm/verification linux_amd64_gfortran"
     echo ""
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        exit 0
+    fi
     exit 1
 fi
 
@@ -149,7 +159,7 @@ COPY_FILES=(
 
 # Files to link from root directory (documentation)
 DOC_FILES=(
-    "QUICK_REFERENCE.md"
+    "README.md"
 )
 
 # Create symlinks for scripts
@@ -238,5 +248,5 @@ else
 fi
 
 echo ""
-echo "See QUICK_REFERENCE.md for more commands."
+echo "See README.md for more commands."
 echo ""

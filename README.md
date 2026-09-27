@@ -1,486 +1,348 @@
 # MITgcm Verification Docker Tools
 
-Docker-based workflow for compiling and running MITgcm verification experiments on multiple architectures. The code framework can be adapted to compile and run custom MITgcm configurations.
+Docker-based workflow for compiling and running MITgcm verification experiments
+on multiple architectures, without installing a Fortran/MPI/NetCDF toolchain on
+your host machine. The same framework can be adapted to compile and run custom
+MITgcm configurations.
 
-**MITgcm Resources:**
+**MITgcm resources:**
 - [Getting Started with MITgcm](https://mitgcm.readthedocs.io/en/latest/getting_started/getting_started.html)
-- [Tutorial Example Experiments](https://mitgcm.readthedocs.io/en/latest/examples/examples.html)
-
+- [Tutorial example experiments](https://mitgcm.readthedocs.io/en/latest/examples/examples.html)
 
 ## Overview
 
-This repository provides Docker tools that enable fast, reproducible compilation and execution of MITgcm verification experiments. The key innovation is a **compile-once, run-many workflow** that eliminates unnecessary recompilation when only input parameters change.
+This repository provides Docker tools for fast, reproducible compilation and
+execution of MITgcm verification experiments. The key idea is a
+**compile-once, run-many workflow**: recompilation is only needed when Fortran
+source changes, not when input parameters change.
 
-### Key Benefits
-
-✅ **Multi-architecture** - ARM64 (Apple Silicon) and x86_64 (Intel/AMD)  
-✅ **Fast compilation** - Parallel builds with `-j` flag 
-✅ **No recompilation** - Change input parameters without recompiling   
-✅ **Persistent storage** - model executable binary and simulation outputs saved outside Docker  
-✅ **Easy setup** - Symlinks into your existing MITgcm installation
-
+- **Multi-architecture** — ARM64 (Apple Silicon) and x86_64 (Intel/AMD)
+- **Fast compilation** — parallel builds via `-j`
+- **No recompilation for input-only changes** — swap input directories freely
+- **Persistent storage** — binaries and outputs are written to your host filesystem, not left inside the container
+- **Easy setup** — one setup script symlinks these tools into your existing MITgcm checkout
 
 ## Prerequisites
 
-- **Docker Desktop** installed and running
-- **MITgcm source code** (available from https://github.com/MITgcm/MITgcm)
+- **Docker Desktop**, installed and running
+- **MITgcm source code** (https://github.com/MITgcm/MITgcm)
 - **8+ GB RAM** allocated to Docker
-- **1+ CPUs** allocated to Docker (for parallel compilation)
-- **Supported architecture:** ARM64 or x86_64
-- **MPI support:** Built-in (OpenMPI included for MPI experiments)
+- **2+ CPUs** allocated to Docker (more CPUs → faster compilation via `-j`)
+- **ARM64 or x86_64** host architecture
 
-### Configure Docker Resources
+Docker Desktop → Settings → Resources: Memory 8-12 GB, CPUs 2+, Disk 64+ GB.
+CPU allocation affects compilation speed, not model runtime — most experiments
+only need 1-4 CPUs to run.
 
-Docker Desktop → Settings → Resources:
-- **Memory:** 8-12 GB
-- **CPUs:** 2+ (more CPUs = faster compilation via `-j` flag)
-- **Disk:** 64+ GB
-
-**Note:** Docker CPUs affect compilation speed, not model runtime. Most experiments need 1-4 CPUs to run.
-
-## Quick Start
-
-### 1. Clone This Repository
+## Quick start
 
 ```bash
+# 1. Clone this repository
 git clone https://github.com/ifenty/MITgcm_verification_docker.git
 cd MITgcm_verification_docker
-```
 
-### 2. Link to Your MITgcm Installation
-
-```bash
+# 2. Link the scripts into your MITgcm checkout
 ./scripts/setup_links.sh /path/to/your/MITgcm/verification
-```
 
-The script automatically:
-- Detects your system architecture (ARM64 or x86_64)
-- Suggests the appropriate build options file from MITgcm's `tools/build_options/`
-- Creates symlinks in your verification directory
-
-**Supported architectures:**
-- **ARM64:** Apple Silicon (M1/M2/M3/M4), ARM servers → `linux_arm64_gfortran`
-- **x86_64:** Intel/AMD PCs and workstations → `linux_amd64_gfortran`
-
-### 3. Build Docker Image
-
-**Recommended:** Use the build script (auto-detects your architecture):
-
-```bash
+# 3. Build the Docker image (auto-detects ARM64/x86_64)
 cd /path/to/your/MITgcm/verification
 ./docker_build.sh
+
+# 4. Compile and run an experiment
+./experiment_compile.sh 1D_ocean_ice_column -j 4
+./experiment_run_no_compile.sh 1D_ocean_ice_column
+./compare_results.sh 1D_ocean_ice_column
+less 1D_ocean_ice_column/output_docker/output.txt
 ```
 
-The script automatically detects your architecture and passes the correct build arguments.
+`setup_links.sh` detects your architecture, suggests the matching build-options
+file from MITgcm's `tools/build_options/` (`linux_arm64_gfortran` or
+`linux_amd64_gfortran`), and symlinks the scripts plus this README into your
+verification directory.
 
-**Verify the build succeeded:**
+**Verify the image built correctly:**
 ```bash
 docker images | grep mitgcm
-# Should show: mitgcm   latest   ...   ~2.5 GB
-
 docker run --rm mitgcm:latest gfortran --version
-# Should show: GNU Fortran (Debian ...) ...
 ```
 
-**Manual build (if needed):**
-```bash
-# For ARM64 (Apple Silicon)
-docker build -t mitgcm:latest --build-arg OPTFILE=linux_arm64_gfortran --build-arg MPI_ARCH=aarch64-linux-gnu -f Dockerfile ../
-
-# For x86_64 (Intel/AMD)
-docker build -t mitgcm:latest --build-arg OPTFILE=linux_amd64_gfortran --build-arg MPI_ARCH=x86_64-linux-gnu -f Dockerfile ../
-```
-
-**Build time:** ~5 minutes  
-**Image size:** ~2.5 GB  
-**Includes:** gfortran, NetCDF, OpenMPI
-
-### 4. Compile and Run
-
-**Non-MPI experiments:**
-```bash
-# Compile (adjust -j to match your CPU count)
-./experiment_compile.sh 1D_ocean_ice_column -j 4
-
-# Run
-./experiment_run_no_compile.sh 1D_ocean_ice_column
-
-# Compare against reference results
-./compare_results.sh 1D_ocean_ice_column
-
-# View results
-less 1D_ocean_ice_column/output_docker/output.txt
-```
-
-**With custom code modifications:**
-```bash
-# Compile with custom code directory (MUST use absolute path)
-./experiment_compile.sh lab_sea -mods /path/to/custom/code -j 4
-
-# Run
-./experiment_run_no_compile.sh lab_sea
-```
-
-**Note:** The `-mods` flag requires an absolute path. Relative paths will be rejected with an error.
-
-**MPI experiments:**
-```bash
-# Compile with MPI (adjust -j to match your CPU count)
-./experiment_compile.sh tutorial_global_oce_latlon -mpi -j 4
-
-# Run with 2 MPI processes (nPx=2, nPy=1 from SIZE.h_mpi)
-./experiment_run_no_compile.sh tutorial_global_oce_latlon -mpi 2
-
-# Compare against reference results
-./compare_results.sh tutorial_global_oce_latlon
-
-# View results
-less tutorial_global_oce_latlon/output_docker/output.txt
-```
-
-**Notes:**
-- **`-j` flag:** Controls parallel compilation. Use `-j N` where N = your CPU count. Check with: `docker info | grep CPUs`
-- **MPI processes:** Must match experiment's `SIZE.h_mpi` (nPx × nPy). Example: nPx=2, nPy=1 → use `-mpi 2`
-- **Success:** Look for `mitgcmuv` binary in `output_docker/` and "Execution ended Normally" in `output.txt`
-
-## Core Workflow: Compile Once, Run Many
-
-The power of this tool is separating compilation from execution:
-
-```bash
-# Compile once (adjust -j to your CPU count: -j 2, -j 4, -j 8, etc.)
-./experiment_compile.sh 1D_ocean_ice_column -j 4
-
-# Create custom input parameters
-cp -r 1D_ocean_ice_column/input 1D_ocean_ice_column/input_custom
-vim 1D_ocean_ice_column/input_custom/data
-
-# Run with custom inputs (30 seconds, no recompilation!)
-./experiment_run_no_compile.sh 1D_ocean_ice_column input_custom
-less 1D_ocean_ice_column/output_docker/output.txt
-
-# Edit parameters and run again
-vim 1D_ocean_ice_column/input_custom/data
-./experiment_run_no_compile.sh 1D_ocean_ice_column input_custom
-
-# Run with different input variations
-./experiment_run_no_compile.sh 1D_ocean_ice_column input_scenario1
-./experiment_run_no_compile.sh 1D_ocean_ice_column input_scenario2
-```
-
-**Key insight:** Input parameter changes (namelist files, forcing data, etc.) don't require recompilation. Only recompile when you modify Fortran source code.
-
-## Five Main Scripts
-
-| Script | Purpose | Time | Usage |
-|--------|---------|------|-------|
-| `experiment_compile.sh` | Compile experiment | 2-4 min | `./experiment_compile.sh <experiment> [-j N] [-mpi] [-mods <dir>] [-output <dir>]` |
-| `experiment_run_no_compile.sh` | Run with existing binary | ~30 sec | `./experiment_run_no_compile.sh <experiment> [input_dir] [-mpi N]` |
-| `compare_results.sh` | Compare against reference | ~1 sec | `./compare_results.sh <experiment> [output_dir] [--match N]` |
-| `docker_build.sh` | Build Docker image | ~5 min | `./docker_build.sh` |
-| `docker_run_interactive.sh` | Interactive shell | N/A | `./docker_run_interactive.sh <experiment>` |
-
-**Key flags:**
-- `-j N` - Parallel compilation with N jobs (match to your CPU count: `-j 2`, `-j 4`, `-j 8`, etc.)
-- `-mpi` (compile) - Compile with MPI support (auto-detects processes from SIZE.h_mpi)
-- `-mpi N` (run) - Run with N MPI processes (uses mpirun)
-- `-mods <dir>` (compile) - Use custom code from specified directory (MUST be absolute path)
-- `-output <dir>` (compile) - Output directory name (default: `output_docker`)
-- `-clean` (compile) - Force clean build (otherwise uses incremental compilation)
-- `input_dir` - Optional input directory (defaults to `input` if not specified)
-
-## Compilation Speed
-
-The `-j` flag controls parallel compilation jobs. **Match N to your CPU count** for best performance:
-
-| Jobs | Time | When to Use |
-|------|------|-------------|
-| `-j 2` | 5-6 min | 2 CPUs available |
-| `-j 4` | 3-4 min | 4 CPUs available (recommended) |
-| `-j 8` | 2-3 min | 8+ CPUs available (fast) |
-
-**Check your CPU allocation:** `docker info | grep CPUs`
-
-Using more jobs than available CPUs provides no benefit.
-
-## Binary Storage
-
-After compilation, the binary exists in two locations:
-
-```
-<experiment>/
-├── build_docker/
-│   ├── mitgcmuv          ← Master copy (2.4 MB)
-│   ├── Makefile          ← Build configuration
-│   ├── *.o               ← Object files (1,486 files total)
-│   └── *.f               ← Preprocessed Fortran
-│
-└── output_docker/
-    ├── mitgcmuv          ← Runtime copy (used by experiment_run_no_compile.sh)
-    ├── output.txt        ← Model log
-    ├── *.data            ← Output data files
-    └── *.meta            ← Metadata files
-```
-
-Both binaries are identical. The `output_docker/` copy is used by `experiment_run_no_compile.sh` for execution.
-
-## Repository Structure
-
-```
-MITgcm_verification_docker/
-├── README.md                          # This file
-├── QUICK_REFERENCE.md                 # Command cheat sheet
-├── LICENSE                            # MIT License
-├── Dockerfile                         # Docker image definition
-│
-├── scripts/                           # All executable scripts
-│   ├── setup_links.sh                 # Setup and architecture detection
-│   ├── docker_build.sh                # Build Docker image
-│   ├── docker_run_interactive.sh      # Interactive shell
-│   ├── experiment_compile.sh          # Compile experiment
-│   ├── experiment_run_no_compile.sh   # Run without recompiling
-│   └── compare_results.sh             # Compare against reference
-│
-└── docs/                              # Additional documentation
-    ├── CHANGELOG.md                   # Version history
-    ├── REPOSITORY_STRUCTURE.md        # How it works
-    └── archive/                       # Detailed guides
-```
-
-## How It Works
-
-1. **Symlink Integration:** Scripts are symlinked into your MITgcm `verification/` directory
-2. **Docker Environment:** Provides consistent Linux environment with gfortran + NetCDF
-3. **Mount-Based Architecture:** MITgcm source is **mounted** (not copied) into the Docker container at runtime
-   - Allows modifying MITgcm source code without rebuilding Docker image
-   - Changes to code take effect immediately on next compile
-   - Custom code directories can be specified via `-mods` flag
-4. **MITgcm Build Options:** Docker image includes full path to optfiles via `OPTFILE` environment variable
-5. **Volume Mounts:** Persistent storage for binaries and outputs on your host machine
-6. **Architecture Detection:** Automatically selects correct compiler options for ARM64 or x86_64
-
-The repository is separate from MITgcm source, making it easy to update independently and use with multiple MITgcm installations.
-
-## MPI Support
-
-This Docker environment includes **OpenMPI** for experiments that require MPI parallelization.
-
-### Compiling MPI Experiments
-
-Use the `-mpi` flag to compile with MPI support:
-
-```bash
-# Compile with MPI (adjust -j to your CPU count)
-./experiment_compile.sh tutorial_global_oce_latlon -mpi -j 4
-
-# Compile without MPI (default)
-./experiment_compile.sh 1D_ocean_ice_column -j 4
-```
-
-The `-mpi` flag automatically tries to use an MPI-enabled optfile (e.g., `linux_arm64_gfortran+mpi`). If not available, it falls back to the standard optfile.
-
-### Running MPI Experiments
-
-Use the `-mpi N` flag to run with N MPI processes. **N must match the experiment's `SIZE.h_mpi` configuration** (nPx × nPy):
-
-```bash
-# Check SIZE.h_mpi for required process count
-cat tutorial_global_oce_latlon/code/SIZE.h_mpi | grep -E "nPx|nPy"
-# Shows: nPx = 2, nPy = 1, so use -mpi 2
-
-# Run with MPI (2 processes for tutorial_global_oce_latlon)
-./experiment_run_no_compile.sh tutorial_global_oce_latlon -mpi 2
-
-# Run with custom input directory and MPI
-./experiment_run_no_compile.sh tutorial_global_oce_latlon input_custom -mpi 2
-
-# Run without MPI (default)
-./experiment_run_no_compile.sh 1D_ocean_ice_column
-```
-
-### MPI Environment
-
-The Docker image includes:
-- **OpenMPI:** Latest stable version from Debian
-- **mpicc, mpif77, mpif90:** MPI compiler wrappers
-- **mpirun:** MPI execution command (used automatically with `-mpi`)
-- **NetCDF with MPI:** Parallel I/O support
-
-**Limitations:**
-- Docker runs on a single host (multi-node MPI not supported)
-- The `-mpi N` value must exactly match nPx × nPy in `SIZE.h_mpi` or the model will fail
-
-## Comparing Results Against Reference
-
-Each verification experiment includes reference results in `results/output.txt`. Use `compare_results.sh` to verify your output matches the reference:
-
-```bash
-# Run and compare
-./experiment_run_no_compile.sh 1D_ocean_ice_column
-./compare_results.sh 1D_ocean_ice_column
-
-# Output shows:
-#   Matching digits: 16
-#   Required:        13
-#   Status:          ✓ PASS
-```
-
-**How it works:**
-- Extracts monitor output statistics (`%MON` lines) from both files
-- Compares numerical values digit-by-digit (same algorithm as MITgcm's `testreport`)
-- Reports number of matching digits
-- Default requirement: 13 digits (adjustable with `--match N`)
-
-**Pass/Fail criteria:**
-- **PASS (13+ digits):** Within acceptable roundoff error
-- **FAIL (<13 digits):** May indicate compiler differences or code changes
-
-**Custom threshold:**
-```bash
-./compare_results.sh 1D_ocean_ice_column --match 10  # More lenient
-./compare_results.sh 1D_ocean_ice_column --match 16  # More strict
-```
-
-## Custom Code Modifications
-
-The `-mods` flag allows you to compile with custom or modified MITgcm source code without changing the original MITgcm installation.
-
-### Use Cases
-- Add instrumentation for debugging or validation
-- Test modified physics routines
-- Use alternative parameterizations
-- Override experiment configuration (SIZE.h, packages.conf)
-
-### How It Works
-1. Create a directory with your custom code files (e.g., `code_validation/`)
-2. Put modified or new `.F`, `.h`, or `.conf` files in this directory
-3. Compile with `-mods` flag pointing to your custom code directory
-4. MITgcm's build system will use your files instead of the originals
-
-### Example Workflow
-
-```bash
-# Create custom code directory
-mkdir -p /path/to/project/code_validation
-
-# Add your modified files
-cp custom_kpp_calc.F /path/to/project/code_validation/kpp_calc.F
-cp custom_SIZE.h /path/to/project/code_validation/SIZE.h
-
-# Compile with custom code (absolute path required)
-./experiment_compile.sh lab_sea -mods /path/to/project/code_validation -j 8
-
-# Run normally - the binary includes your modifications
-./experiment_run_no_compile.sh lab_sea
-```
-
-**Important:** 
-- The `-mods` flag **requires an absolute path** (e.g., `/Users/...` or `/home/...`). Relative paths will be rejected.
-- The custom code directory is **mounted** into the Docker container, not copied. Changes to files in this directory are immediately available for the next compilation.
-
-## Common Workflows
-
-### Testing Different Parameter Sets
+The image contains only compilers, NetCDF and MPI libraries (roughly 1 GB) —
+MITgcm source is **mounted** at runtime, not baked into the image, so editing
+source code never requires a Docker rebuild.
+
+## Core workflow: compile once, run many
 
 ```bash
 # Compile once
+./experiment_compile.sh 1D_ocean_ice_column -j 4
+
+# Create an input variant and run it (no recompilation)
+cp -r 1D_ocean_ice_column/input 1D_ocean_ice_column/input_custom
+vim 1D_ocean_ice_column/input_custom/data
+./experiment_run_no_compile.sh 1D_ocean_ice_column input_custom
+less 1D_ocean_ice_column/output_docker/output.txt
+
+# Edit and run again — still no recompilation
+vim 1D_ocean_ice_column/input_custom/data
+./experiment_run_no_compile.sh 1D_ocean_ice_column input_custom
+```
+
+Only Fortran source changes require recompiling; namelist/forcing-data changes
+do not.
+
+## Command reference
+
+| Script | Purpose | Typical time |
+|---|---|---|
+| `docker_build.sh` | Build the Docker image | ~5 min |
+| `experiment_compile.sh` | Compile an experiment (no run) | 2-4 min |
+| `experiment_run_no_compile.sh` | Run using an already-compiled binary | ~30 sec |
+| `compare_results.sh` | Compare output against the experiment's reference results | <1 sec |
+| `docker_run_interactive.sh` | Open an interactive shell in the container | — |
+| `setup_links.sh` | One-time setup: symlink these tools into a MITgcm checkout | — |
+
+### `experiment_compile.sh`
+
+```
+./experiment_compile.sh <experiment> [-j N] [-mpi] [-mods <dir>] [-build <dir>] [-clean]
+```
+
+| Flag | Meaning |
+|---|---|
+| `-j N` | Parallel `make` jobs (default 4). Match to your Docker CPU allocation (`docker info \| grep CPUs`). |
+| `-mpi` | Compile with MPI support. Requires `SIZE.h_mpi` in the experiment's `code/` directory; `nPx`/`nPy` are read from it automatically. |
+| `-mods <dir>` | Build with a custom code directory instead of the experiment's own `code/`. **Must be an absolute path.** If the directory contains symlinks, they are automatically dereferenced (copied as real files) before mounting — no extra flag needed here. |
+| `-build <dir>` | Build directory name (default `build_docker`). Use a non-default name to keep multiple builds of the same experiment side by side. |
+| `-clean` | Force a full rebuild. Without it, builds are incremental — much faster for single-file changes. |
+
+The compiled binary is written to both `<experiment>/<build-dir>/mitgcmuv` and
+copied for you by `experiment_run_no_compile.sh` at run time.
+
+### `experiment_run_no_compile.sh`
+
+```
+./experiment_run_no_compile.sh <experiment> [input_dir] [-mpi N] [-build <dir>] [-output <dir>]
+```
+
+| Flag | Meaning |
+|---|---|
+| `input_dir` | Input directory to use (default `input`). Any positional argument that isn't a recognized flag is treated as this. |
+| `-mpi N` | Run with `N` MPI processes via `mpirun`. `N` must equal `nPx * nPy` from the experiment's `SIZE.h_mpi`. |
+| `-build <dir>` | Build directory to take the binary from (default `build_docker`) — must match whatever `-build` you used at compile time. |
+| `-output <dir>` | Output directory name (default `output_docker`). |
+
+Requires a binary already produced by `experiment_compile.sh` in the matching
+build directory.
+
+### `compare_results.sh`
+
+```
+./compare_results.sh <experiment> [output_dir] [--match N]
+```
+
+Extracts `%MON` monitor lines from `<experiment>/results/output.txt`
+(reference) and `<experiment>/<output_dir>/output.txt` (yours), and compares
+them digit-by-digit using the same algorithm as MITgcm's own `testreport`.
+Prints the number of matching digits and exits `0` (PASS) if it meets
+`--match N` (default `13`), `1` (FAIL) otherwise.
+
+### `docker_run_interactive.sh`
+
+```
+./docker_run_interactive.sh [-code <path>] [-taf_dir <path>] [-dereference] [-h]
+```
+
+Opens an interactive bash shell in the container for manual debugging,
+inspecting build files, or running `genmake2`/`make` steps by hand. Run
+`./docker_run_interactive.sh -h` for the full built-in help, including
+worked examples.
+
+| Flag | Meaning |
+|---|---|
+| `-code <path>` | Mount a custom code directory at `/custom_code` (absolute path required). |
+| `-taf_dir <path>` | Mount a TAF installation at `/taf` and add it to `PATH`; see [TAF support](#taf-support-adjointtangent-linear) below. |
+| `-dereference` | Dereference symlinks in `-code` before mounting. **Unlike `experiment_compile.sh -mods`, this script does not dereference automatically** — pass this flag explicitly if your code directory contains symlinks pointing outside it. |
+
+## Repository structure
+
+```
+MITgcm_verification_docker/
+├── README.md
+├── LICENSE
+├── Dockerfile
+├── scripts/
+│   ├── setup_links.sh
+│   ├── docker_build.sh
+│   ├── docker_run_interactive.sh
+│   ├── experiment_compile.sh
+│   ├── experiment_run_no_compile.sh
+│   └── compare_results.sh
+└── tests/
+    └── test_script_integration.sh
+```
+
+`setup_links.sh` symlinks the six scripts and this README into your MITgcm
+`verification/` directory (except `Dockerfile`, which is copied rather than
+symlinked, since Docker requires a real file as its build context).
+
+## How it works
+
+1. **Symlink integration** — the scripts run from inside your MITgcm
+   `verification/` directory via symlinks back to this repo, so `git pull`
+   here updates every linked checkout at once.
+2. **Mount-based Docker image** — the image contains only the compiler
+   toolchain (gfortran, NetCDF, OpenMPI); MITgcm source is bind-mounted into
+   the container at `/mitgcm` at build/run time, not copied into the image.
+   Editing MITgcm source or your `-mods`/`-code` directory takes effect on the
+   next compile with no Docker rebuild.
+3. **Architecture detection** — every script inspects `uname -m` and picks the
+   matching build-options file (`linux_arm64_gfortran` or
+   `linux_amd64_gfortran`) and MPI architecture path automatically.
+4. **Host-side persistence** — compiled binaries and run output live in
+   `<experiment>/build_docker/` and `<experiment>/output_docker/` on your host,
+   not inside the (ephemeral, `--rm`) container.
+
+## MPI support
+
+The image includes OpenMPI (`mpicc`, `mpif77`, `mpif90`, `mpirun`) and
+NetCDF built with parallel I/O support. Docker runs on a single host, so
+multi-node MPI is not supported — only multi-process, single-host runs.
+
+```bash
+# Check how many processes an experiment expects
+grep -E "nPx|nPy" tutorial_global_oce_latlon/code/SIZE.h_mpi
+# nPx = 2, nPy = 1  ->  2 processes total
+
+# Compile with MPI support
+./experiment_compile.sh tutorial_global_oce_latlon -mpi -j 4
+
+# Run with that many processes
+./experiment_run_no_compile.sh tutorial_global_oce_latlon -mpi 2
+```
+
+`-mpi N` at run time must equal `nPx * nPy` from `SIZE.h_mpi` or the model
+will fail. There is no separate "MPI-enabled optfile" variant — `-mpi` at
+compile time passes `-mpi` straight through to MITgcm's own `testreport` with
+the same architecture-detected optfile used for non-MPI builds.
+
+## Custom code modifications
+
+Two different flags cover two different workflows — don't mix them up:
+
+**`experiment_compile.sh -mods <dir>`** — build the experiment using files
+from `<dir>` instead of its own `code/` directory (e.g. a modified
+`kpp_calc.F`, or an overridden `SIZE.h`/`packages.conf`). The directory is
+temporarily swapped in for `code/`, restored afterward, and also saved as
+`<experiment>/code_validation/` for reference. **Symlinks inside `-mods` are
+dereferenced automatically** — no extra flag needed.
+
+```bash
+mkdir -p /path/to/project/code_validation
+cp custom_kpp_calc.F /path/to/project/code_validation/kpp_calc.F
+
+./experiment_compile.sh lab_sea -mods /path/to/project/code_validation -j 8
+./experiment_run_no_compile.sh lab_sea
+```
+
+**`docker_run_interactive.sh -code <dir> [-dereference]`** — mount `<dir>` at
+`/custom_code` for a manual, interactive build (running `genmake2`/`make`
+yourself inside the container). This script does **not** dereference symlinks
+automatically; pass `-dereference` if `<dir>` contains symlinks pointing
+outside it (a common pattern when referencing files directly from an MITgcm
+checkout: `ln -s /MITgcm/pkg/kpp/kpp_calc.F kpp_calc.F`). Without
+`-dereference`, Docker mounts the symlink itself and cannot follow it outside
+the mounted directory, so the target file appears missing inside the
+container.
+
+```bash
+./docker_run_interactive.sh -code /path/to/code_with_symlinks -dereference
+```
+
+Both flags require **absolute paths**; relative paths are rejected.
+
+## TAF support (adjoint/tangent linear)
+
+`docker_run_interactive.sh -taf_dir <path>` mounts a TAF (Tangent linear and
+Adjoint Model Compiler) installation at `/taf`, adds it to `PATH`, and mounts
+`~/.ssh` read-only for TAF license validation.
+
+```bash
+./docker_run_interactive.sh -code /path/to/custom/code -taf_dir /path/to/TAF
+
+# Inside the container:
+which staf                # /taf/staf
+cd lab_sea/build
+../../../tools/genmake2 -mods=/custom_code -optfile=$OPTFILE
+make depend
+make adall                 # adjoint
+make ftlall                # tangent linear
+```
+
+`<path>/staf` must exist; `~/.ssh` is mounted read-only so the container can
+read license keys but cannot alter your SSH configuration.
+
+If your project has its own TAF setup notes (build flags, license quirks,
+specific experiments), keep those alongside that project rather than in this
+standalone repo — this section only covers what these Docker scripts do.
+
+## Comparing results against reference
+
+Every MITgcm verification experiment ships reference output in
+`results/output.txt`.
+
+```bash
+./experiment_run_no_compile.sh 1D_ocean_ice_column
+./compare_results.sh 1D_ocean_ice_column
+#   Matching digits: 16
+#   Required:        13
+#   Status:          PASS
+```
+
+13+ matching digits is the default pass threshold (adjustable with
+`--match N`); fewer usually indicates a compiler/platform difference or an
+intentional code change rather than roundoff.
+
+## Common workflows
+
+**Sweep several input variants without recompiling:**
+```bash
 ./experiment_compile.sh 1D_ocean_ice_column -j 8
-
-# Create multiple input variants
 for scenario in baseline warm cold; do
-    cp -r 1D_ocean_ice_column/input 1D_ocean_ice_column/input_$scenario
-    # Edit parameters in each input_$scenario/data file
+    cp -r 1D_ocean_ice_column/input "1D_ocean_ice_column/input_$scenario"
+    # edit each input_$scenario/data as needed
 done
-
-# Run all scenarios (no recompilation)
 for scenario in baseline warm cold; do
-    ./experiment_run_no_compile.sh 1D_ocean_ice_column input_$scenario
-    mv 1D_ocean_ice_column/output_docker/output.txt results_$scenario.txt
+    ./experiment_run_no_compile.sh 1D_ocean_ice_column "input_$scenario"
+    mv 1D_ocean_ice_column/output_docker/output.txt "results_$scenario.txt"
 done
 ```
 
-### Debugging Compilation Issues
-
+**Debug a compilation interactively:**
 ```bash
-# Open interactive shell in Docker
-./docker_run_interactive.sh 1D_ocean_ice_column
-
-# Inside Docker, you can:
-# - Run genmake2 manually
-# - Check compiler flags
-# - Test compilation steps
-# - Inspect build files
+./docker_run_interactive.sh
+# inside the container: run genmake2/make by hand, inspect build files
 ```
 
-### Using Different Experiments
-
+**Use with more than one MITgcm checkout:**
 ```bash
-# List available experiments
-ls -d */
-
-# Compile different experiment
-./experiment_compile.sh tutorial_barotropic_gyre -j 8
-
-# Run it
-./experiment_run_no_compile.sh tutorial_barotropic_gyre
+./scripts/setup_links.sh ~/MITgcm_v1/verification
+./scripts/setup_links.sh ~/MITgcm_v2/verification
+# both now share the same Docker tools; git pull here updates both
 ```
 
 ## Troubleshooting
 
-| Problem | Solution |
-|---------|----------|
-| **Docker build fails** | Check Docker is running: `docker info` |
-| **Compilation slow (>5 min)** | Check CPU allocation: `docker info \| grep CPUs`<br>Increase CPUs in Docker Desktop → Settings → Resources |
-| **Binary not found** | Compile first: `./experiment_compile.sh <experiment> -j 4` |
-| **Scripts don't work after moving** | Re-run setup: `./scripts/setup_links.sh /path/to/MITgcm/verification` |
-| **Assembler errors** | Check architecture: `uname -m`<br>Re-run setup with correct optfile (see Quick Start) |
-
-## Multiple MITgcm Installations
-
-You can use this repository with multiple MITgcm installations:
-
-```bash
-# Link to installation 1
-./scripts/setup_links.sh ~/MITgcm_v1/verification
-
-# Link to installation 2
-./scripts/setup_links.sh ~/MITgcm_v2/verification
-
-# Both installations now use the same Docker tools
-# Updates via git pull apply to both
-```
-
-## Updating the Tools
-
-```bash
-cd /path/to/MITgcm_verification_docker
-git pull
-
-# Symlinks automatically point to updated scripts
-# No need to re-run setup unless structure changes
-```
-
-## Additional Resources
-
-- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Command cheat sheet
-- **[UPGRADE_NOTES.md](UPGRADE_NOTES.md)** - Mount-based architecture upgrade guide
-- **`docs/`** - Detailed guides and changelog
-- **[MITgcm](https://mitgcm.org/)** - MITgcm documentation
-- **[Docker Desktop](https://docs.docker.com/desktop/)** - Docker documentation
+| Problem | Fix |
+|---|---|
+| Docker build fails | Check Docker Desktop is running: `docker info` |
+| Compilation is slow | Check CPU allocation: `docker info \| grep CPUs`; increase it in Docker Desktop → Settings → Resources |
+| `Binary not found` when running | Compile first: `./experiment_compile.sh <experiment> -j 4` |
+| Scripts stop working after moving the repo | Re-run `./scripts/setup_links.sh /path/to/MITgcm/verification` |
+| `-mods`/`-code` rejected | Both require absolute paths — relative paths are rejected on purpose |
+| "File not found" with custom code under `-code` | Directory likely has symlinks pointing outside it — add `-dereference` (compile's `-mods` does this automatically, no flag needed there) |
+| Assembler/toolchain errors | Confirm architecture with `uname -m` and re-run `setup_links.sh` to pick the matching optfile |
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) file.
-
-This toolset is designed for use with MITgcm. MITgcm itself is subject to its own license terms.
-
-## Contributing
-
-Contributions welcome! Please test on your system before submitting PRs.
-
-## Acknowledgments
-
-- Built for MITgcm verification experiments
-- Supports ARM64 (Apple Silicon) and x86_64 (Intel/AMD)
-- Uses official MITgcm build system (`testreport`)
-- Enables rapid iteration for scientific computing workflows
+MIT License — see [LICENSE](LICENSE). This toolset is for use with MITgcm;
+MITgcm itself is subject to its own license terms.

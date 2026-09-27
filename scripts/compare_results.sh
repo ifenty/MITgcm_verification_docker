@@ -99,7 +99,7 @@ if [ ! -f "$OUTPUT_FILE" ]; then
     echo "Expected: $OUTPUT_FILE"
     echo ""
     echo "Run the model first:"
-    echo "  ./run_no_compile.sh $EXPERIMENT"
+    echo "  ./experiment_run_no_compile.sh $EXPERIMENT"
     exit 1
 fi
 

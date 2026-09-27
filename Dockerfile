@@ -41,13 +41,25 @@ WORKDIR /home/mitgcm
 # MITgcm will be mounted at runtime at /mitgcm
 # This allows users to modify source code without rebuilding the Docker image
 ENV MITGCM_ROOT=/mitgcm
+ENV MITGCM_ROOTDIR=/mitgcm
 WORKDIR /mitgcm/verification
 
 # Set environment variables for NetCDF and MPI (installed via apt)
 ENV NETCDF_ROOT=/usr
-ENV PATH=/mitgcm/tools:$PATH
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mitgcm/tools
 ENV MPI_INC_DIR=/usr/lib/${MPI_ARCH}/openmpi/include
 ENV MPIINCLUDEDIR=/usr/lib/${MPI_ARCH}/openmpi/include
+
+# Detect architecture and set appropriate optfile
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then \
+        echo "export OPTFILE=/mitgcm/tools/build_options/linux_amd64_gfortran" > /home/mitgcm/.optfile_env; \
+    elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
+        echo "export OPTFILE=/mitgcm/tools/build_options/linux_arm64_gfortran" > /home/mitgcm/.optfile_env; \
+    else \
+        echo "export OPTFILE=/mitgcm/tools/build_options/linux_amd64_gfortran" > /home/mitgcm/.optfile_env; \
+    fi && \
+    cat /home/mitgcm/.optfile_env >> /home/mitgcm/.bashrc
 
 # Default command: interactive bash shell
 # Users specify experiment when running experiment_compile.sh or experiment_run_no_compile.sh

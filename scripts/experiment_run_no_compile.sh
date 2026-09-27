@@ -13,6 +13,47 @@
 
 set -e
 
+# Check for help or no arguments before anything that depends on being run
+# from inside a MITgcm checkout, so -h always works (even from a bare clone).
+if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
+    echo "Usage: $0 <experiment_name> [input_dir] [-mpi N] [-build <dir>] [-output <dir>]"
+    echo ""
+    echo "Options:"
+    echo "  input_dir     Input directory (default: input)"
+    echo "                Examples: input, input.seaice, input_ad"
+    echo "  -mpi N        Run with MPI using N processes"
+    echo "  -build <dir>  Build directory name where binary is located (default: build_docker)"
+    echo "  -output <dir> Output directory name for model outputs (default: output_docker)"
+    echo ""
+    echo "Examples:"
+    echo "  $0 1D_ocean_ice_column                       # Use defaults"
+    echo "  $0 1D_ocean_ice_column input.seaice          # Custom input dir"
+    echo "  $0 lab_sea -output output_validation         # Custom output dir"
+    echo "  $0 lab_sea -build build_validation -output output_validation  # Custom dirs"
+    echo "  $0 tutorial_global_oce_latlon input -mpi 2   # MPI with 2 procs"
+    echo ""
+    echo "Prerequisites:"
+    echo "  Must have mitgcmuv binary in build directory"
+    echo "  Run experiment_compile.sh first if needed"
+    echo "  Use same -build flag as used during compilation"
+    echo ""
+    exit 0
+fi
+
+if [[ "$1" == -* ]]; then
+    echo "Error: experiment name is required"
+    echo ""
+    echo "Usage: $0 <experiment_name> [input_dir] [-mpi N] [-output <dir>]"
+    echo ""
+    echo "Examples:"
+    echo "  $0 1D_ocean_ice_column"
+    echo "  $0 lab_sea -output output_validation"
+    echo "  $0 tutorial_global_oce_latlon input -mpi 2"
+    echo ""
+    echo "Try '$0 --help' for more information"
+    exit 1
+fi
+
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # Find MITgcm root (parent of verification directory)
@@ -38,47 +79,10 @@ fi
 
 VERIFICATION_DIR="$MITGCM_ROOT/verification"
 
-# Check for help or no arguments
-if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
-    echo "Usage: $0 <experiment_name> [input_dir] [-mpi N] [-output <dir>]"
-    echo ""
-    echo "Options:"
-    echo "  input_dir    Input directory (default: input)"
-    echo "               Examples: input, input.seaice, input_ad"
-    echo "  -mpi N       Run with MPI using N processes"
-    echo "  -output <dir> Output directory name (default: output_docker)"
-    echo ""
-    echo "Examples:"
-    echo "  $0 1D_ocean_ice_column              # Use default input and output dirs"
-    echo "  $0 1D_ocean_ice_column input.seaice # Custom input dir"
-    echo "  $0 lab_sea input -output output_validation  # Custom output dir"
-    echo "  $0 tutorial_global_oce_latlon input -mpi 2  # MPI with 2 procs"
-    echo ""
-    echo "Prerequisites:"
-    echo "  Must have mitgcmuv binary in output directory"
-    echo "  Run experiment_compile.sh first if needed"
-    echo "  Use same -output flag as used during compilation"
-    echo ""
-    exit 0
-fi
-
-if [[ "$1" == -* ]]; then
-    echo "Error: experiment name is required"
-    echo ""
-    echo "Usage: $0 <experiment_name> [input_dir] [-mpi N] [-output <dir>]"
-    echo ""
-    echo "Examples:"
-    echo "  $0 1D_ocean_ice_column"
-    echo "  $0 lab_sea -output output_validation"
-    echo "  $0 tutorial_global_oce_latlon input -mpi 2"
-    echo ""
-    echo "Try '$0 --help' for more information"
-    exit 1
-fi
-
 EXPERIMENT="$1"
 INPUT_DIR="input"
 OUTPUT_DIR_NAME="output_docker"
+BUILD_DIR_NAME="build_docker"
 USE_MPI=false
 MPI_PROCS=1
 
@@ -95,9 +99,13 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_DIR_NAME="$2"
             shift 2
             ;;
+        -build)
+            BUILD_DIR_NAME="$2"
+            shift 2
+            ;;
         -*)
             echo "Unknown option: $1"
-            echo "Usage: $0 <experiment_name> [input_dir] [-mpi N] [-output <dir>]"
+            echo "Usage: $0 <experiment_name> [input_dir] [-mpi N] [-output <dir>] [-build <dir>]"
             echo "Try '$0 --help' for more information"
             exit 1
             ;;
@@ -117,22 +125,33 @@ if [ ! -d "$VERIFICATION_DIR/$EXPERIMENT/$INPUT_DIR" ]; then
     exit 1
 fi
 
+BUILD_DIR="$VERIFICATION_DIR/$EXPERIMENT/$BUILD_DIR_NAME"
 OUTPUT_DIR="$VERIFICATION_DIR/$EXPERIMENT/$OUTPUT_DIR_NAME"
-if [ ! -f "$OUTPUT_DIR/mitgcmuv" ]; then
-    echo "Error: Binary not found at $OUTPUT_DIR/mitgcmuv"
+
+if [ ! -f "$BUILD_DIR/mitgcmuv" ]; then
+    echo "Error: Binary not found at $BUILD_DIR/mitgcmuv"
     echo ""
     echo "Please compile first:"
-    echo "  ./experiment_compile.sh $EXPERIMENT [-output $OUTPUT_DIR_NAME] [-j N] [-mpi]"
-    echo ""
-    echo "Or if using a different output directory, specify it:"
-    echo "  $0 $EXPERIMENT -output <directory_name>"
+    if [ "$BUILD_DIR_NAME" != "build_docker" ]; then
+        echo "  ./experiment_compile.sh $EXPERIMENT -build $BUILD_DIR_NAME [-j N] [-mpi]"
+    else
+        echo "  ./experiment_compile.sh $EXPERIMENT [-j N] [-mpi]"
+    fi
     exit 1
 fi
+
+# Create output directory
+mkdir -p "$OUTPUT_DIR"
+
+# Copy binary from build directory to output directory
+echo "Copying binary from $BUILD_DIR_NAME to $OUTPUT_DIR_NAME..."
+cp "$BUILD_DIR/mitgcmuv" "$OUTPUT_DIR/mitgcmuv"
 
 echo "=========================================="
 echo "Running MITgcm (NO COMPILATION)"
 echo "=========================================="
 echo "  Experiment: $EXPERIMENT"
+echo "  Build:      $BUILD_DIR_NAME"
 echo "  Input:      $INPUT_DIR"
 echo "  Binary:     $(ls -lh "$OUTPUT_DIR/mitgcmuv" | awk '{print $5}')"
 echo "  MPI:        $USE_MPI"
@@ -157,9 +176,9 @@ docker run --rm \
 
     echo 'Running model...'
     if [ \"$USE_MPI\" = true ]; then
-        mpirun --allow-run-as-root -np $MPI_PROCS ./mitgcmuv
+        mpirun --allow-run-as-root -np $MPI_PROCS ./mitgcmuv > output.txt 2>&1
     else
-        ./mitgcmuv
+        ./mitgcmuv > output.txt 2>&1
     fi
 
     echo ''
@@ -176,7 +195,13 @@ echo "Done!"
 echo "=========================================="
 echo ""
 echo "Output files:"
-ls -lh "$OUTPUT_DIR" | grep -v "^d" | grep -v "^total" | grep -v "mitgcmuv" | awk '{printf "  %-30s %8s\n", $9, $5}'
+ls -lh "$OUTPUT_DIR" | grep -v "^d" | grep -v "^total" | grep -v "mitgcmuv" | grep -v "^l" | awk '{printf "  %-30s %8s\n", $9, $5}'
 echo ""
+echo "Model STDOUT saved to: $OUTPUT_DIR/output.txt"
 echo "View output: less $OUTPUT_DIR/output.txt"
 echo ""
+if grep -q "===== KPP_VALIDATION_START" "$OUTPUT_DIR/output.txt" 2>/dev/null; then
+    KPP_COUNT=$(grep -c "===== KPP_VALIDATION_START" "$OUTPUT_DIR/output.txt")
+    echo "✓ KPP validation output detected ($KPP_COUNT timesteps)"
+    echo ""
+fi

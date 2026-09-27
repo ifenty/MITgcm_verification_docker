@@ -1,15 +1,23 @@
 #!/bin/bash
 #
-# Integration test for run_no_compile.sh and compare_results.sh
+# Integration test for experiment_run_no_compile.sh and compare_results.sh
 # Tests actual script execution with various argument combinations
 #
-
-set -e
+# Deliberately no 'set -e': run_test/run_test_with_message return 1 on a
+# failing test by design, and the script tallies pass/fail counts and picks
+# its own exit code at the end. 'set -e' would abort the whole suite at the
+# first failing test instead of running the rest and reporting a summary.
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SCRIPTS_DIR="$PROJECT_ROOT/scripts"
-TEST_DIR="$PROJECT_ROOT/_temp/test_integration"
+
+# experiment_run_no_compile.sh looks for a MITgcm checkout by walking up from
+# its own location for a 'verification/.gitignore' marker (the same shape a
+# symlinked-into-a-real-checkout install has). Fake that shape here so the
+# script's real root-detection logic runs the same way it would for a user,
+# rather than skipping it.
+TEST_EXP_DIR="$PROJECT_ROOT/verification"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -25,22 +33,21 @@ fail_count=0
 setup_test_env() {
     echo "Setting up test environment..."
 
-    # Scripts look for experiments as siblings to scripts dir
-    # So we create test experiments in the project root
-    TEST_EXP_DIR="$SCRIPTS_DIR"
-
-    # Cleanup any existing test experiments
-    rm -rf "$TEST_EXP_DIR/test_exp1" "$TEST_EXP_DIR/test_exp2" "$TEST_EXP_DIR/test_exp3"
+    rm -rf "$TEST_EXP_DIR"
+    mkdir -p "$TEST_EXP_DIR"
+    touch "$TEST_EXP_DIR/.gitignore"
 
     mkdir -p "$TEST_EXP_DIR/test_exp1/input"
     mkdir -p "$TEST_EXP_DIR/test_exp1/output_docker"
     mkdir -p "$TEST_EXP_DIR/test_exp1/results"
     mkdir -p "$TEST_EXP_DIR/test_exp2/input_custom"
     mkdir -p "$TEST_EXP_DIR/test_exp2/output_docker"
+    mkdir -p "$TEST_EXP_DIR/test_exp3/input"
 
     # Create dummy input files
     echo "# Test input" > "$TEST_EXP_DIR/test_exp1/input/data"
     echo "# Test input custom" > "$TEST_EXP_DIR/test_exp2/input_custom/data"
+    echo "# Test input" > "$TEST_EXP_DIR/test_exp3/input/data"
 
     # Create a dummy binary
     echo '#!/bin/bash' > "$TEST_EXP_DIR/test_exp1/output_docker/mitgcmuv"
@@ -50,12 +57,15 @@ setup_test_env() {
     # Create reference output for comparison tests
     echo "%MON 1 2 3 4 5.123456789" > "$TEST_EXP_DIR/test_exp1/results/output.txt"
     echo "%MON 1 2 3 4 5.123456789" > "$TEST_EXP_DIR/test_exp1/output_docker/output.txt"
+
+    # Custom output dir for compare_results.sh
+    mkdir -p "$TEST_EXP_DIR/test_exp1/output_custom"
+    echo "%MON 1 2 3 4 5.123456789" > "$TEST_EXP_DIR/test_exp1/output_custom/output.txt"
 }
 
 # Cleanup
 cleanup() {
-    # Clean up test experiments from scripts dir
-    rm -rf "$SCRIPTS_DIR/test_exp1" "$SCRIPTS_DIR/test_exp2" "$SCRIPTS_DIR/test_exp3"
+    rm -rf "$TEST_EXP_DIR"
 }
 
 # Test runner
@@ -130,32 +140,32 @@ echo "=========================================="
 setup_test_env
 trap cleanup EXIT
 
-# Test Group 1: run_no_compile.sh validation
+# Test Group 1: experiment_run_no_compile.sh validation
 echo ""
-echo "=== Testing run_no_compile.sh ==="
+echo "=== Testing experiment_run_no_compile.sh ==="
 
 run_test_with_message \
-    "Missing experiment name should fail" \
-    "Error: experiment name is required" \
-    "$SCRIPTS_DIR/run_no_compile.sh"
+    "No arguments shows usage" \
+    "Usage:" \
+    "$SCRIPTS_DIR/experiment_run_no_compile.sh"
 
 run_test_with_message \
     "Flag as first argument should fail" \
     "Error: experiment name is required" \
-    "$SCRIPTS_DIR/run_no_compile.sh -mpi"
+    "$SCRIPTS_DIR/experiment_run_no_compile.sh -mpi"
 
 run_test_with_message \
     "Missing input directory should fail" \
     "Error: Input directory not found" \
-    "$SCRIPTS_DIR/run_no_compile.sh test_exp1 nonexistent_input"
+    "$SCRIPTS_DIR/experiment_run_no_compile.sh test_exp1 nonexistent_input"
 
 # Test Group 2: compare_results.sh validation
 echo ""
 echo "=== Testing compare_results.sh ==="
 
 run_test_with_message \
-    "Missing experiment name should fail" \
-    "Error: experiment name is required" \
+    "No arguments shows usage" \
+    "Usage:" \
     "$SCRIPTS_DIR/compare_results.sh"
 
 run_test_with_message \
@@ -166,61 +176,46 @@ run_test_with_message \
 run_test_with_message \
     "Missing reference file should fail" \
     "ERROR: Reference output not found" \
-    "cd $SCRIPTS_DIR && ./compare_results.sh test_exp2"
+    "cd $TEST_EXP_DIR && $SCRIPTS_DIR/compare_results.sh test_exp2"
 
 run_test_with_message \
     "Missing output file should fail" \
     "ERROR: Output file not found" \
-    "cd $SCRIPTS_DIR && ./compare_results.sh test_exp1 nonexistent_output"
+    "cd $TEST_EXP_DIR && $SCRIPTS_DIR/compare_results.sh test_exp1 nonexistent_output"
 
 run_test \
     "Valid comparison should pass" \
     "pass" \
-    "cd $SCRIPTS_DIR && ./compare_results.sh test_exp1"
+    "cd $TEST_EXP_DIR && $SCRIPTS_DIR/compare_results.sh test_exp1"
 
 # Test Group 3: Argument parsing edge cases
 echo ""
 echo "=== Testing Argument Parsing ==="
 
-# Create test with custom input dir
-mkdir -p "$TEST_DIR/test_exp2/my-input"
-echo "# Test" > "$TEST_DIR/test_exp2/my-input/data"
-
 run_test_with_message \
     "Custom input directory with hyphen in name" \
     "Error: Input directory not found" \
-    "$SCRIPTS_DIR/run_no_compile.sh test_exp2 my-input"
-
-# This should fail because my-input doesn't have a binary yet
-# But it should parse correctly and fail on binary check, not on parsing
-
-# Test with flag detection
-# Create test experiment with input dir
-mkdir -p "$SCRIPTS_DIR/test_exp3/input"
-echo "# Test" > "$SCRIPTS_DIR/test_exp3/input/data"
+    "$SCRIPTS_DIR/experiment_run_no_compile.sh test_exp2 my-input"
+# test_exp2 only has input_custom/, not my-input/ -- this should parse the
+# hyphenated name correctly as input_dir and fail on the missing directory,
+# not on argument parsing.
 
 run_test_with_message \
     "Flag detection: -mpi with count, no input_dir" \
-    "ERROR: Binary not found" \
-    "$SCRIPTS_DIR/run_no_compile.sh test_exp3 -mpi 2"
-
-# This should use default 'input' directory and fail on missing binary
-# If it failed on input directory, the parsing is wrong
-
-# Test compare_results.sh with custom output dir
-mkdir -p "$SCRIPTS_DIR/test_exp1/output_custom"
-echo "%MON 1 2 3 4 5.123456789" > "$SCRIPTS_DIR/test_exp1/output_custom/output.txt"
+    "Error: Binary not found" \
+    "$SCRIPTS_DIR/experiment_run_no_compile.sh test_exp3 -mpi 2"
+# test_exp3 has an input/ dir but no compiled binary -- this should use the
+# default 'input' directory and fail on the missing binary, not on parsing.
 
 run_test \
     "Custom output directory" \
     "pass" \
-    "cd $SCRIPTS_DIR && ./compare_results.sh test_exp1 output_custom"
+    "cd $TEST_EXP_DIR && $SCRIPTS_DIR/compare_results.sh test_exp1 output_custom"
 
-# Test with --match flag (should use default output_docker)
 run_test \
     "Flag detection: --match without output_dir" \
     "pass" \
-    "cd $SCRIPTS_DIR && ./compare_results.sh test_exp1 --match 10"
+    "cd $TEST_EXP_DIR && $SCRIPTS_DIR/compare_results.sh test_exp1 --match 10"
 
 # Summary
 echo ""
