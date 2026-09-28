@@ -30,14 +30,11 @@ done
 SCRIPT_DIR="$( cd -P "$( dirname "$SCRIPT_PATH" )" && pwd )"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Detect architecture and set appropriate MPI architecture
+# The image is built for the host architecture; the Dockerfile locates the
+# matching OpenMPI paths itself.
 ARCH=$(uname -m)
 case "$ARCH" in
-    arm64|aarch64)
-        MPI_ARCH="aarch64-linux-gnu"
-        ;;
-    x86_64|amd64)
-        MPI_ARCH="x86_64-linux-gnu"
+    arm64|aarch64|x86_64|amd64)
         ;;
     *)
         echo "Error: Unsupported architecture: $ARCH"
@@ -50,7 +47,6 @@ echo "=========================================="
 echo "Building Docker image for MITgcm"
 echo "=========================================="
 echo "  Architecture: $ARCH"
-echo "  MPI arch:     $MPI_ARCH"
 echo "=========================================="
 echo ""
 echo "Note: This image contains only compilers and libraries."
@@ -58,9 +54,7 @@ echo "      MITgcm source will be mounted at runtime from your host."
 echo ""
 
 cd "$REPO_ROOT"
-docker build -t mitgcm:latest \
-    --build-arg MPI_ARCH="$MPI_ARCH" \
-    -f Dockerfile .
+docker build -t mitgcm:latest -f Dockerfile .
 
 echo ""
 echo "=========================================="

@@ -54,13 +54,26 @@ setup_test_env() {
     echo 'echo "%MON 1 2 3 4 5.123456789"' >> "$TEST_EXP_DIR/test_exp1/output_docker/mitgcmuv"
     chmod +x "$TEST_EXP_DIR/test_exp1/output_docker/mitgcmuv"
 
-    # Create reference output for comparison tests
-    echo "%MON 1 2 3 4 5.123456789" > "$TEST_EXP_DIR/test_exp1/results/output.txt"
-    echo "%MON 1 2 3 4 5.123456789" > "$TEST_EXP_DIR/test_exp1/output_docker/output.txt"
+    # Create reference output for comparison tests (realistic monitor lines:
+    # compare_results.sh compares named variables as time series, like testreport)
+    write_monitor_output "$TEST_EXP_DIR/test_exp1/results/output.txt"
+    write_monitor_output "$TEST_EXP_DIR/test_exp1/output_docker/output.txt"
 
     # Custom output dir for compare_results.sh
     mkdir -p "$TEST_EXP_DIR/test_exp1/output_custom"
-    echo "%MON 1 2 3 4 5.123456789" > "$TEST_EXP_DIR/test_exp1/output_custom/output.txt"
+    write_monitor_output "$TEST_EXP_DIR/test_exp1/output_custom/output.txt"
+}
+
+# Write a small MITgcm-style log with three monitor records
+write_monitor_output() {
+    local f="$1"
+    : > "$f"
+    for step in 1 2 3; do
+        for var in cg2d_init_res dynstat_theta_min dynstat_theta_max dynstat_theta_mean dynstat_theta_sd; do
+            printf '(PID.TID 0000.0001) %%MON %-28s =   %d.2345678901234E-0%d\n' "$var" "$step" "$step" >> "$f"
+        done
+    done
+    echo "PROGRAM MAIN: Execution ended Normally" >> "$f"
 }
 
 # Cleanup

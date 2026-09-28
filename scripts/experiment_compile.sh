@@ -2,27 +2,28 @@
 #
 # Compile MITgcm verification experiment (NO RUN)
 #
-# Usage: ./experiment_compile.sh <experiment_name> [-j <jobs>] [-mpi] [-mods <dir>] [-output <dir>] [-clean]
+# Usage: ./experiment_compile.sh <experiment_name> [-j <jobs>] [-mpi] [-mods <dir>] [-build <dir>] [-clean]
 #
 # Options:
 #   -j <jobs>     Number of parallel make jobs (default: 4)
-#                 Use -j 1 for serial build
-#                 Use -j 8 or -j 16 for faster builds on powerful machines
-#   -mpi          Compile with MPI support (auto-detects processes from SIZE.h_mpi)
-#   -mods <dir>   Use custom code from specified directory (MUST be absolute path)
-#   -output <dir> Output directory name (default: output_docker)
-#   -clean        Force clean build (otherwise uses incremental compilation)
+#   -mpi          Compile with MPI support for nPx*nPy processes, read from
+#                 the experiment's code/SIZE.h_mpi
+#   -mods <dir>   Use this code directory INSTEAD of the experiment's code/
+#                 (MUST be an absolute path to an existing directory)
+#   -build <dir>  Build directory name (default: build_docker)
+#   -clean        Delete the host-side build directory before compiling
+#
+# Every compile is a full rebuild: MITgcm's testreport (used here) always
+# runs "make Clean" in <experiment>/build before building.
 #
 # Output:
-#   - Build files saved to: <experiment>/build_docker/
-#   - Binary saved to both:
-#       <experiment>/build_docker/mitgcmuv
-#       <experiment>/output_docker/mitgcmuv
+#   - Build files and the binary are copied to <experiment>/<build-dir>/
+#   - <experiment>/<build-dir>/build_info.txt records MPI and process count
 #
 # Examples:
 #   ./experiment_compile.sh 1D_ocean_ice_column
 #   ./experiment_compile.sh 1D_ocean_ice_column -j 8
-#   ./experiment_compile.sh tutorial_global_oce_latlon -mpi -j 8
+#   ./experiment_compile.sh tutorial_barotropic_gyre -mpi -j 8
 
 set -e
 
@@ -34,18 +35,20 @@ if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
     echo "Options:"
     echo "  -j <jobs>     Number of parallel make jobs (default: 4)"
     echo "                Examples: -j 1 (serial), -j 8 (fast), -j 16 (max)"
-    echo "  -mpi          Compile with MPI support (auto-detects processes from SIZE.h_mpi)"
-    echo "  -mods <dir>   Use custom code from specified directory (MUST be absolute path)"
+    echo "  -mpi          Compile with MPI for nPx*nPy processes (read from code/SIZE.h_mpi)"
+    echo "  -mods <dir>   Use this directory INSTEAD of the experiment's code/ (absolute path;"
+    echo "                it must contain every file code/ would, not just the changed ones)"
     echo "  -build <dir>  Build directory name (default: build_docker)"
-    echo "  -clean        Force clean build (otherwise uses incremental compilation)"
+    echo "  -clean        Delete the host-side build directory first"
+    echo ""
+    echo "Every compile is a full rebuild (testreport always runs 'make Clean')."
     echo ""
     echo "Examples:"
-    echo "  $0 1D_ocean_ice_column              # Non-MPI, default -j 4, incremental"
-    echo "  $0 1D_ocean_ice_column -j 8         # Non-MPI, fast, incremental"
-    echo "  $0 1D_ocean_ice_column -clean -j 8  # Force full rebuild"
-    echo "  $0 tutorial_global_oce_latlon -mpi -j 8  # MPI-enabled, incremental"
-    echo "  $0 lab_sea -mods /full/path/to/code_validation -j 8  # Custom code, incremental"
-    echo "  $0 lab_sea -mods /path/to/code -clean -j 8  # Custom code, force full rebuild"
+    echo "  $0 1D_ocean_ice_column              # Non-MPI, default -j 4"
+    echo "  $0 1D_ocean_ice_column -j 8         # Non-MPI, 8 make jobs"
+    echo "  $0 1D_ocean_ice_column -clean -j 8  # Also wipe build_docker/ first"
+    echo "  $0 tutorial_barotropic_gyre -mpi -j 8     # MPI-enabled"
+    echo "  $0 lab_sea -mods /full/path/to/code_validation -j 8  # Custom code"
     echo "  $0 lab_sea -build build_validation -j 8  # Custom build directory"
     echo ""
     exit 0
@@ -54,12 +57,12 @@ fi
 if [[ "$1" == -* ]]; then
     echo "Error: experiment name is required"
     echo ""
-    echo "Usage: $0 <experiment_name> [-j <jobs>] [-mpi] [-mods <dir>]"
+    echo "Usage: $0 <experiment_name> [-j <jobs>] [-mpi] [-mods <dir>] [-build <dir>] [-clean]"
     echo ""
     echo "Examples:"
     echo "  $0 lab_sea -j 8"
-    echo "  $0 tutorial_global_oce_latlon -mpi -j 12"
-    echo "  $0 lab_sea -mods ../code_validation -j 8"
+    echo "  $0 tutorial_barotropic_gyre -mpi -j 12"
+    echo "  $0 lab_sea -mods /full/path/to/code_validation -j 8"
     exit 1
 fi
 
@@ -90,31 +93,31 @@ fi
 
 VERIFICATION_DIR="$MITGCM_ROOT/verification"
 
-# Function to extract MPI info from SIZE.h_mpi on host side
+# Read nPx and nPy from a SIZE.h-style file; prints "npx:npy:total" or "not_found"
 get_mpi_info_from_size_h() {
-    local experiment_path="$1"
-    local size_h_mpi="$experiment_path/code/SIZE.h_mpi"
-
-    # Check if SIZE.h_mpi exists
-    if [ ! -f "$size_h_mpi" ]; then
+    local size_h="$1"
+    if [ ! -f "$size_h" ]; then
         echo "not_found"
         return
     fi
-
-    # Parse Fortran PARAMETER format to extract nPx and nPy
-    # Format: &           nPx =   2,  or  &           nPx=2,
-    local npx=$(grep -i 'nPx' "$size_h_mpi" | grep -o '[0-9]\+' | head -1)
-    local npy=$(grep -i 'nPy' "$size_h_mpi" | grep -o '[0-9]\+' | head -1)
-
-    # Validate extracted values
+    # Same pattern testreport uses: "     &           nPx =   2,"
+    local npx npy
+    npx=$(grep -i "^ *& *nPx *=" "$size_h" | head -1 | sed 's/.*= *//; s/[^0-9].*//')
+    npy=$(grep -i "^ *& *nPy *=" "$size_h" | head -1 | sed 's/.*= *//; s/[^0-9].*//')
     if [ -z "$npx" ] || [ -z "$npy" ]; then
         echo "not_found"
         return
     fi
+    echo "$npx:$npy:$((npx * npy))"
+}
 
-    # Calculate total processes
-    local total=$((npx * npy))
-    echo "$npx:$npy:$total"
+# Require a value after an option; $1 = option name, $2 = value
+require_value() {
+    if [[ -z "$2" || "$2" == -* ]]; then
+        echo "Error: $1 requires a value"
+        echo "Use -h or --help for more information"
+        exit 1
+    fi
 }
 
 EXPERIMENT="$1"
@@ -122,13 +125,17 @@ MAKE_JOBS=4  # Default to 4 parallel jobs
 USE_MPI=false
 MODS_DIR=""
 BUILD_DIR_NAME="build_docker"  # Default build directory name
-CLEAN_BUILD=false  # Force clean build
+CLEAN_BUILD=false
 
 # Parse remaining arguments
 shift || true
 while [[ $# -gt 0 ]]; do
     case $1 in
         -j)
+            if [[ ! "$2" =~ ^[1-9][0-9]*$ ]]; then
+                echo "Error: -j requires a positive integer (got: '${2}')"
+                exit 1
+            fi
             MAKE_JOBS="$2"
             shift 2
             ;;
@@ -137,8 +144,8 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -mods)
+            require_value -mods "$2"
             MODS_DIR="$2"
-            # Validate that -mods path is absolute
             if [[ "$MODS_DIR" != /* ]]; then
                 echo "ERROR: -mods path must be an absolute path"
                 echo "Provided: $MODS_DIR"
@@ -146,9 +153,19 @@ while [[ $# -gt 0 ]]; do
                 echo "Example: -mods /full/path/to/code_validation"
                 exit 1
             fi
+            if [ ! -d "$MODS_DIR" ]; then
+                echo "ERROR: -mods directory does not exist: $MODS_DIR"
+                exit 1
+            fi
+            MODS_DIR="${MODS_DIR%/}"
             shift 2
             ;;
         -build)
+            require_value -build "$2"
+            if [[ "$2" == */* || "$2" == "." || "$2" == ".." ]]; then
+                echo "Error: -build must be a directory name inside the experiment (no '/'): $2"
+                exit 1
+            fi
             BUILD_DIR_NAME="$2"
             shift 2
             ;;
@@ -191,12 +208,36 @@ case "$ARCH" in
         ;;
 esac
 
+# MPI process count comes from SIZE.h_mpi (in -mods dir if given, else code/)
+MPI_NPROCS=1
+if [ "$USE_MPI" = true ]; then
+    if [ -n "$MODS_DIR" ]; then
+        SIZE_H_MPI="$MODS_DIR/SIZE.h_mpi"
+    else
+        SIZE_H_MPI="$VERIFICATION_DIR/$EXPERIMENT/code/SIZE.h_mpi"
+    fi
+    MPI_INFO=$(get_mpi_info_from_size_h "$SIZE_H_MPI")
+    if [ "$MPI_INFO" = "not_found" ]; then
+        echo "ERROR: -mpi flag requires SIZE.h_mpi (with nPx and nPy) in:"
+        echo "       $SIZE_H_MPI"
+        echo "       Cannot proceed with MPI build."
+        exit 1
+    fi
+    NPX=$(echo "$MPI_INFO" | cut -d: -f1)
+    NPY=$(echo "$MPI_INFO" | cut -d: -f2)
+    MPI_NPROCS=$(echo "$MPI_INFO" | cut -d: -f3)
+fi
+
 echo "=========================================="
 echo "Compiling MITgcm (NO RUN)"
 echo "=========================================="
 echo "  Experiment: $EXPERIMENT"
 echo "  Arch:       $ARCH"
-echo "  MPI:        $USE_MPI"
+if [ "$USE_MPI" = true ]; then
+echo "  MPI:        true ($MPI_NPROCS processes: nPx=$NPX x nPy=$NPY from SIZE.h_mpi)"
+else
+echo "  MPI:        false"
+fi
 echo "  Make jobs:  -j $MAKE_JOBS"
 if [ -n "$MODS_DIR" ]; then
 echo "  Mods:       $MODS_DIR"
@@ -205,227 +246,151 @@ echo "  MITgcm:     $MITGCM_ROOT"
 echo "=========================================="
 echo ""
 
-# Create build directory on host
 BUILD_DIR="$VERIFICATION_DIR/$EXPERIMENT/$BUILD_DIR_NAME"
 
-# Clean build directory only when user explicitly requests -clean flag
-# Otherwise keep it for incremental compilation (much faster for single file changes)
-# Make's dependency tracking will detect changed files in mods directory by timestamp
-if [ "$CLEAN_BUILD" = true ]; then
-    if [ -d "$BUILD_DIR" ]; then
-        echo "Cleaning build directory (user requested): $BUILD_DIR"
-        rm -rf "$BUILD_DIR"
-    fi
-elif [ -d "$BUILD_DIR" ]; then
-    echo "Using existing build directory for incremental compilation: $BUILD_DIR"
-    echo "(Use -clean flag to force full rebuild)"
-else
-    echo "Creating build directory: $BUILD_DIR"
+if [ "$CLEAN_BUILD" = true ] && [ -d "$BUILD_DIR" ]; then
+    echo "Cleaning build directory (user requested): $BUILD_DIR"
+    rm -rf "$BUILD_DIR"
 fi
-
 mkdir -p "$BUILD_DIR"
+# Old build files are replaced by this build
+rm -f "$BUILD_DIR/mitgcmuv" "$BUILD_DIR/build_info.txt"
 
 echo "Mounting directories:"
 echo "  MITgcm: $MITGCM_ROOT -> /mitgcm (read-write)"
 echo "  Build:  $BUILD_DIR -> /build_output (read-write)"
+
+# Mods directory: symlinks (at any depth) are dereferenced into a temp copy,
+# since the container cannot follow links that point outside the mount.
+MODS_MOUNT_ARGS=()
+TEMP_MODS_DIR=""
+cleanup_temp_mods() {
+    if [ -n "$TEMP_MODS_DIR" ] && [ -d "$TEMP_MODS_DIR" ]; then
+        rm -rf "$TEMP_MODS_DIR"
+    fi
+}
+trap cleanup_temp_mods EXIT
+
+if [ -n "$MODS_DIR" ]; then
+    if find "$MODS_DIR" -type l | grep -q .; then
+        TEMP_MODS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mitgcm_mods.XXXXXX")"
+        (cd "$MODS_DIR" && tar ch .) | tar xC "$TEMP_MODS_DIR"
+        echo "  Mods:   $MODS_DIR (symlinks dereferenced into $TEMP_MODS_DIR) -> /mods_dir"
+        MODS_MOUNT_ARGS=(-v "$TEMP_MODS_DIR:/mods_dir")
+    else
+        echo "  Mods:   $MODS_DIR -> /mods_dir"
+        MODS_MOUNT_ARGS=(-v "$MODS_DIR:/mods_dir")
+    fi
+fi
 echo ""
 
-# Check for SIZE.h_mpi on host side (informational only)
+TESTREPORT_MPI_ARG=""
 if [ "$USE_MPI" = true ]; then
-    MPI_INFO=$(get_mpi_info_from_size_h "$VERIFICATION_DIR/$EXPERIMENT")
-    if [ "$MPI_INFO" != "not_found" ]; then
-        NPX=$(echo "$MPI_INFO" | cut -d: -f1)
-        NPY=$(echo "$MPI_INFO" | cut -d: -f2)
-        TOTAL=$(echo "$MPI_INFO" | cut -d: -f3)
-        echo "==> SIZE.h_mpi found: nPx=$NPX, nPy=$NPY ($TOTAL processes)"
-    else
-        echo "==> SIZE.h_mpi not found in code/ (testreport will use default SIZE.h)"
-    fi
-    echo ""
-fi
-
-# Copy SIZE.h_mpi to SIZE.h on HOST side when -mpi flag is used
-if [ "$USE_MPI" = true ]; then
-    if [ "$MPI_INFO" = "not_found" ]; then
-        echo "ERROR: -mpi flag requires SIZE.h_mpi in $EXPERIMENT/code/"
-        echo "       SIZE.h_mpi not found. Cannot proceed with MPI build."
-        exit 1
-    fi
-
-    # Copy SIZE.h_mpi to SIZE.h on HOST side (for symlink resolution in build_docker)
-    SIZE_H_MPI_SOURCE="$VERIFICATION_DIR/$EXPERIMENT/code/SIZE.h_mpi"
-    SIZE_H_DEST="$VERIFICATION_DIR/$EXPERIMENT/code/SIZE.h"
-
-    echo "==> Copying SIZE.h_mpi to SIZE.h in code directory..."
-    if cp "$SIZE_H_MPI_SOURCE" "$SIZE_H_DEST"; then
-        echo "    Copied: code/SIZE.h_mpi -> code/SIZE.h"
-        echo ""
-    else
-        echo "ERROR: Failed to copy SIZE.h_mpi to SIZE.h"
-        exit 1
-    fi
+    # testreport's plain -mpi means 2 processes and rewrites SIZE.h_mpi to
+    # fit; -MPI=N keeps the full nPx*nPy decomposition from SIZE.h_mpi.
+    TESTREPORT_MPI_ARG="-MPI=$MPI_NPROCS"
 fi
 
 # Compile in Docker with MITgcm mounted from host
-# Build docker command with mods mount if needed
-if [ -n "$MODS_DIR" ]; then
-    # MODS_DIR is guaranteed to be absolute (validated above)
-
-    # Check if mods directory contains symlinks
-    if find "$MODS_DIR" -maxdepth 1 -type l | grep -q .; then
-        # Has symlinks - create temp directory with dereferenced files
-        echo "  Mods:   $MODS_DIR (dereferencing symlinks)"
-        TEMP_MODS_DIR="/tmp/mitgcm_mods_$$_$(basename "$MODS_DIR")"
-        mkdir -p "$TEMP_MODS_DIR"
-        # Use tar to copy and dereference symlinks
-        (cd "$MODS_DIR" && tar ch .) | tar xC "$TEMP_MODS_DIR"
-        echo "  Temp:   $TEMP_MODS_DIR -> /mods_dir"
-        MODS_MOUNT_ARG="-v $TEMP_MODS_DIR:/mods_dir"
-        CLEANUP_TEMP_MODS=true
-    else
-        echo "  Mods:   $MODS_DIR -> /mods_dir"
-        MODS_MOUNT_ARG="-v $MODS_DIR:/mods_dir"
-        CLEANUP_TEMP_MODS=false
-    fi
-else
-    MODS_MOUNT_ARG=""
-    CLEANUP_TEMP_MODS=false
-fi
-
+COMPILE_RC=0
 docker run --rm \
     -v "$MITGCM_ROOT:/mitgcm" \
     -v "$BUILD_DIR:/build_output" \
-    $MODS_MOUNT_ARG \
+    "${MODS_MOUNT_ARGS[@]}" \
     mitgcm:latest bash -c "
-    set -e
     cd /mitgcm/verification
+    EXP_DIR=/mitgcm/verification/$EXPERIMENT
 
-    # Set optfile path (now points to mounted MITgcm)
     export OPTFILE=/mitgcm/tools/build_options/$OPTFILE
+
+    restore_code() {
+        if [ -n \"$MODS_DIR\" ] && [ -d \"\$EXP_DIR/code_orig\" ]; then
+            echo '==> Restoring original code/ directory'
+            rm -rf \"\$EXP_DIR/code\"
+            mv \"\$EXP_DIR/code_orig\" \"\$EXP_DIR/code\"
+        fi
+        # testreport output dirs are named tr_<hostname>_<date>_<n>
+        rm -rf /mitgcm/verification/tr_\$(hostname)_*
+    }
+    trap restore_code EXIT
+    trap 'exit 130' INT TERM
 
     echo '==> Compiling experiment with -j $MAKE_JOBS...'
 
     # If -mods is specified, temporarily replace code/ directory with mods
     if [ -n \"$MODS_DIR\" ]; then
-        echo 'Using custom code directory (temporarily replacing code/)'
-
-        # Check for leftover code_orig from interrupted previous run
-        if [ -d \"/mitgcm/verification/$EXPERIMENT/code_orig\" ]; then
+        if [ -d \"\$EXP_DIR/code_orig\" ]; then
             echo ''
             echo 'ERROR: Found leftover code_orig/ from previous interrupted run'
             echo '       This indicates the script was interrupted before cleanup.'
             echo ''
             echo 'To fix, manually restore the original code directory:'
-            echo '  cd /mitgcm/verification/$EXPERIMENT'
+            echo '  cd $EXPERIMENT'
             echo '  rm -rf code'
             echo '  mv code_orig code'
             echo ''
+            trap - EXIT
             exit 1
         fi
-
-        # Backup original code directory
-        if [ -d \"/mitgcm/verification/$EXPERIMENT/code\" ]; then
-            echo '==> Backing up original code/ to code_orig/'
-            mv \"/mitgcm/verification/$EXPERIMENT/code\" \"/mitgcm/verification/$EXPERIMENT/code_orig\"
+        echo '==> Using custom code directory (temporarily replacing code/)'
+        if [ -d \"\$EXP_DIR/code\" ]; then
+            mv \"\$EXP_DIR/code\" \"\$EXP_DIR/code_orig\"
         fi
-
-        # Copy mods directory to code/ preserving timestamps for incremental compilation
-        echo '==> Copying mods directory to code/ (preserving timestamps)'
-        cp -rp /mods_dir \"/mitgcm/verification/$EXPERIMENT/code\"
+        cp -rp /mods_dir \"\$EXP_DIR/code\"
     fi
-
-    # Use testreport for compilation
-    TESTREPORT_CMD=\"./testreport -t $EXPERIMENT -optfile \$OPTFILE -norun\"
 
     if [ \"$USE_MPI\" = true ]; then
-        export MPI=true
         export MPI_INC_DIR=/usr/lib/$MPI_ARCH/openmpi/include
         export MPIINCLUDEDIR=/usr/lib/$MPI_ARCH/openmpi/include
-        TESTREPORT_CMD=\"\$TESTREPORT_CMD -mpi\"
     fi
 
-    TESTREPORT_CMD=\"\$TESTREPORT_CMD -j $MAKE_JOBS\"
-
+    TESTREPORT_CMD=\"./testreport -t $EXPERIMENT -optfile \$OPTFILE -norun $TESTREPORT_MPI_ARG -j $MAKE_JOBS\"
     echo \"Running: \$TESTREPORT_CMD\"
-    if ! eval \$TESTREPORT_CMD > /tmp/compile.log 2>&1; then
-        # Restore original code directory before exiting on error
-        if [ -n \"$MODS_DIR\" ] && [ -d \"/mitgcm/verification/$EXPERIMENT/code_orig\" ]; then
-            rm -rf \"/mitgcm/verification/$EXPERIMENT/code\"
-            mv \"/mitgcm/verification/$EXPERIMENT/code_orig\" \"/mitgcm/verification/$EXPERIMENT/code\"
-        fi
-
-        # Copy log to build directory before exiting
-        cp /tmp/compile.log /build_output/compile.log
-        echo 'ERROR: testreport command failed!'
-        echo ''
-        echo 'Last 50 lines of log:'
-        tail -50 /tmp/compile.log
-        echo ''
-        echo 'Full log saved to: build_docker/compile.log'
-        exit 1
-    fi
+    \$TESTREPORT_CMD > /tmp/compile.log 2>&1 || true
+    cp /tmp/compile.log /build_output/compile.log
 
     if [ ! -f $EXPERIMENT/build/mitgcmuv ]; then
-        # Restore original code directory before exiting on error
-        if [ -n \"$MODS_DIR\" ] && [ -d \"/mitgcm/verification/$EXPERIMENT/code_orig\" ]; then
-            rm -rf \"/mitgcm/verification/$EXPERIMENT/code\"
-            mv \"/mitgcm/verification/$EXPERIMENT/code_orig\" \"/mitgcm/verification/$EXPERIMENT/code\"
-        fi
-
-        # Copy log to build directory before exiting
-        cp /tmp/compile.log /build_output/compile.log
         echo 'ERROR: Compilation failed - binary not created!'
         echo ''
         echo 'Last 50 lines of log:'
         tail -50 /tmp/compile.log
         echo ''
-        echo 'Full log saved to: build_docker/compile.log'
+        echo 'Full log saved to: $BUILD_DIR_NAME/compile.log'
         exit 1
     fi
 
     # After successful compilation, save mods as reference copy
     if [ -n \"$MODS_DIR\" ]; then
         echo '==> Saving mods directory as reference (code_validation/)'
-        # Remove old reference copy if exists
-        if [ -d \"/mitgcm/verification/$EXPERIMENT/code_validation\" ]; then
-            rm -rf \"/mitgcm/verification/$EXPERIMENT/code_validation\"
-        fi
-        # Copy mods to reference location
-        cp -rp /mods_dir \"/mitgcm/verification/$EXPERIMENT/code_validation\"
-        echo '    Saved to: code_validation/'
+        rm -rf \"\$EXP_DIR/code_validation\"
+        cp -rp /mods_dir \"\$EXP_DIR/code_validation\"
     fi
 
-    # Restore original code directory after successful compilation
-    if [ -n \"$MODS_DIR\" ] && [ -d \"/mitgcm/verification/$EXPERIMENT/code_orig\" ]; then
-        echo '==> Restoring original code/ directory'
-        rm -rf \"/mitgcm/verification/$EXPERIMENT/code\"
-        mv \"/mitgcm/verification/$EXPERIMENT/code_orig\" \"/mitgcm/verification/$EXPERIMENT/code\"
-    fi
-
-    # Save compilation log to build directory (works for both paths)
-    cp /tmp/compile.log /build_output/compile.log
-    echo '==> Compilation log saved to: build_docker/compile.log'
-    echo ''
-    echo '==> Compilation successful!'
-    echo ''
-
+    echo '==> Compilation successful! Log: $BUILD_DIR_NAME/compile.log'
     echo '==> Copying build files...'
-
-    # Copy all build files to build directory (suppress symlink warnings)
     cp -r $EXPERIMENT/build/* /build_output/ 2>&1 | grep -v 'dangling symlink' || true
-
-    # Ensure binary is in build directory
     cp $EXPERIMENT/build/mitgcmuv /build_output/mitgcmuv
+    echo \"Copied \$(find /build_output -type f | wc -l) build files\"
+" || COMPILE_RC=$?
 
-    echo '✓ Binary saved to $BUILD_DIR_NAME/mitgcmuv'
-    echo ''
+if [ "$COMPILE_RC" -ne 0 ] || [ ! -f "$BUILD_DIR/mitgcmuv" ]; then
+    echo ""
+    echo "=========================================="
+    echo "Compilation FAILED"
+    echo "=========================================="
+    echo "Log: $BUILD_DIR/compile.log"
+    exit 1
+fi
 
-    # Count build files
-    BUILD_FILE_COUNT=\$(find /build_output -type f | wc -l)
-    echo \"Copied \$BUILD_FILE_COUNT build files\"
-    echo ''
-    echo '==> Complete!'
-"
+cat > "$BUILD_DIR/build_info.txt" <<EOF
+EXPERIMENT=$EXPERIMENT
+MPI=$USE_MPI
+NPROCS=$MPI_NPROCS
+MODS_DIR=$MODS_DIR
+ARCH=$ARCH
+OPTFILE=$OPTFILE
+DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
 
 echo ""
 echo "=========================================="
@@ -436,9 +401,6 @@ echo "Build directory: $BUILD_DIR"
 ls -lh "$BUILD_DIR/mitgcmuv"
 echo ""
 echo "Compilation log: $BUILD_DIR/compile.log"
-ls -lh "$BUILD_DIR/compile.log"
-echo ""
-echo "Build files: $(find "$BUILD_DIR" -type f | wc -l | tr -d ' ') files"
 echo ""
 
 # Show mods reference directory if used
@@ -451,17 +413,9 @@ if [ -n "$MODS_DIR" ]; then
     fi
 fi
 
-# Cleanup temp mods directory if created
-if [ "$CLEANUP_TEMP_MODS" = true ] && [ -n "$TEMP_MODS_DIR" ] && [ -d "$TEMP_MODS_DIR" ]; then
-    echo "Cleaning up temporary mods directory: $TEMP_MODS_DIR"
-    rm -rf "$TEMP_MODS_DIR"
-    echo ""
-fi
-
+RUN_ARGS=""
+[ "$BUILD_DIR_NAME" != "build_docker" ] && RUN_ARGS="$RUN_ARGS -build $BUILD_DIR_NAME"
+[ "$USE_MPI" = true ] && RUN_ARGS="$RUN_ARGS -mpi $MPI_NPROCS"
 echo "Next step: Run the model with"
-if [ "$BUILD_DIR_NAME" != "build_docker" ]; then
-    echo "  ./experiment_run_no_compile.sh $EXPERIMENT -build $BUILD_DIR_NAME"
-else
-    echo "  ./experiment_run_no_compile.sh $EXPERIMENT"
-fi
+echo "  ./experiment_run_no_compile.sh $EXPERIMENT$RUN_ARGS"
 echo ""
