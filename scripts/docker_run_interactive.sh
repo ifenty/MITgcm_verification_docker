@@ -10,7 +10,15 @@
 set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-MITGCM_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Directory holding the real scripts (this file may be a symlink)
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [ -h "$SCRIPT_PATH" ]; do
+    LINK_DIR="$( cd -P "$( dirname "$SCRIPT_PATH" )" && pwd )"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ $SCRIPT_PATH != /* ]] && SCRIPT_PATH="$LINK_DIR/$SCRIPT_PATH"
+done
+REAL_SCRIPT_DIR="$( cd -P "$( dirname "$SCRIPT_PATH" )" && pwd )"
 
 # Function to show comprehensive help
 show_help() {
@@ -60,7 +68,8 @@ DETAILED OPTIONS
 
     Requirements:
     • Path MUST be absolute
-    • Directory must contain 'staf' executable
+    • Directory should contain the 'staf' executable (a warning is
+      printed if it does not)
     • Requires SSH keys in ~/.ssh for license validation
 
     What it does:
@@ -156,6 +165,9 @@ EXAMPLES
 6. Custom code with symlinks + TAF:
     ./docker_run_interactive.sh -code /path/to/code -dereference -taf_dir /path/to/TAF
 
+7. Non-interactive (commands piped on stdin, no terminal needed):
+    echo 'cd 1D_ocean_ice_column && ls' | ./docker_run_interactive.sh
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 INSIDE THE CONTAINER
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -216,7 +228,7 @@ MORE INFORMATION
 EOF
 }
 
-# Parse arguments
+# Parse arguments (before locating MITgcm, so -h works anywhere)
 CUSTOM_CODE_DIR=""
 TAF_DIR=""
 DEREFERENCE=false
@@ -269,6 +281,26 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Find MITgcm root (parent of verification directory), same as the other scripts
+if [ -f "$SCRIPT_DIR/../verification/.gitignore" ]; then
+    MITGCM_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+else
+    MITGCM_ROOT=""
+    SEARCH_DIR="$SCRIPT_DIR"
+    for i in {1..5}; do
+        if [ -d "$SEARCH_DIR/verification" ] && [ -d "$SEARCH_DIR/model" ]; then
+            MITGCM_ROOT="$SEARCH_DIR"
+            break
+        fi
+        SEARCH_DIR="$(dirname "$SEARCH_DIR")"
+    done
+    if [ -z "$MITGCM_ROOT" ]; then
+        echo "Error: Cannot find MITgcm root directory"
+        echo "Run this script from MITgcm/verification/ (after setup_links.sh)"
+        exit 1
+    fi
+fi
+
 # Handle dereferencing if requested
 CODE_DIR_TO_MOUNT="$CUSTOM_CODE_DIR"
 if [[ "$DEREFERENCE" == true ]] && [[ -n "$CUSTOM_CODE_DIR" ]]; then
@@ -277,12 +309,11 @@ if [[ "$DEREFERENCE" == true ]] && [[ -n "$CUSTOM_CODE_DIR" ]]; then
         echo "Detected symlinks in code directory: $CUSTOM_CODE_DIR"
 
         # Create temp directory
-        TEMP_DIR="/tmp/docker_code_$(basename "$CUSTOM_CODE_DIR")_$$"
-        mkdir -p "$TEMP_DIR"
+        TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/docker_code_$(basename "$CUSTOM_CODE_DIR").XXXXXX")"
 
         # Copy with dereferencing (-L flag)
         echo "  Dereferencing to: $TEMP_DIR"
-        cp -rL "$CUSTOM_CODE_DIR"/* "$TEMP_DIR/" 2>/dev/null || cp -rL "$CUSTOM_CODE_DIR"/. "$TEMP_DIR/"
+        cp -RL "$CUSTOM_CODE_DIR"/. "$TEMP_DIR/"
 
         # Track for cleanup
         TEMP_DIRS+=("$TEMP_DIR")
@@ -332,10 +363,10 @@ echo "Starting interactive Docker container for MITgcm..."
 echo "Architecture: $ARCH -> $PLATFORM"
 cd "$MITGCM_ROOT"
 
-# Build image if it doesn't exist
+# Build image if it doesn't exist (same build as docker_build.sh)
 if ! docker image inspect mitgcm:latest >/dev/null 2>&1; then
-    echo "Image not found. Building..."
-    docker build -t mitgcm:latest -f verification/Dockerfile .
+    echo "Image mitgcm:latest not found. Building it with docker_build.sh..."
+    "$REAL_SCRIPT_DIR/docker_build.sh"
 fi
 
 echo ""
@@ -353,11 +384,13 @@ if [[ -n "$CODE_DIR_TO_MOUNT" ]]; then
 fi
 if [[ -n "$TAF_DIR" ]]; then
     echo "  /taf -> $TAF_DIR"
-    echo "  /home/mitgcm/.ssh -> $HOME/.ssh (read-only)"
+    if [[ -d "$HOME/.ssh" ]]; then
+        echo "  /home/mitgcm/.ssh -> $HOME/.ssh (read-only)"
+    fi
 fi
 echo ""
 echo "Environment variables set:"
-echo "  OPTFILE=$OPTFILE (full path)"
+echo "  OPTFILE=/mitgcm/tools/build_options/$OPTFILE"
 if [[ -n "$TAF_DIR" ]]; then
     echo "  PATH includes /taf (staf available)"
 fi
@@ -391,31 +424,43 @@ echo "  ./mitgcmuv"
 echo ""
 
 # Build docker mount arguments
-MOUNT_ARGS="-v $MITGCM_ROOT:/mitgcm"
+MOUNT_ARGS=(-v "$MITGCM_ROOT:/mitgcm")
 if [[ -n "$CODE_DIR_TO_MOUNT" ]]; then
-    MOUNT_ARGS="$MOUNT_ARGS -v $CODE_DIR_TO_MOUNT:/custom_code"
+    MOUNT_ARGS+=(-v "$CODE_DIR_TO_MOUNT:/custom_code")
 fi
 if [[ -n "$TAF_DIR" ]]; then
-    MOUNT_ARGS="$MOUNT_ARGS -v $TAF_DIR:/taf"
+    MOUNT_ARGS+=(-v "$TAF_DIR:/taf")
     # Mount ~/.ssh for TAF license key (read-only for security)
     if [[ -d "$HOME/.ssh" ]]; then
-        MOUNT_ARGS="$MOUNT_ARGS -v $HOME/.ssh:/home/mitgcm/.ssh"
+        MOUNT_ARGS+=(-v "$HOME/.ssh:/home/mitgcm/.ssh:ro")
     else
         echo "Warning: ~/.ssh directory not found, TAF may not have access to license key"
     fi
 fi
 
-# Build environment arguments
-ENV_ARGS=""
+# Build environment arguments (OPTFILE is also set by the image's .bashrc,
+# but that is only read by interactive shells)
+ENV_ARGS=(-e "OPTFILE=/mitgcm/tools/build_options/$OPTFILE")
 if [[ -n "$TAF_DIR" ]]; then
     # Add /taf to PATH
-    ENV_ARGS="$ENV_ARGS -e PATH=/taf:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mitgcm/tools"
+    ENV_ARGS+=(-e "PATH=/taf:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mitgcm/tools")
 fi
 
-docker run --rm -it \
-    --platform $PLATFORM \
-    $MOUNT_ARGS \
-    $ENV_ARGS \
+# Allocate a terminal only when stdin is one; piped commands
+# (e.g. echo 'make' | ./docker_run_interactive.sh) run non-interactively.
+if [ -t 0 ]; then
+    TTY_ARGS=(-it)
+    SHELL_ARGS=()
+else
+    TTY_ARGS=(-i)
+    SHELL_ARGS=(-s)
+    echo "(stdin is not a terminal: running piped commands non-interactively)"
+fi
+
+docker run --rm "${TTY_ARGS[@]}" \
+    --platform "$PLATFORM" \
+    "${MOUNT_ARGS[@]}" \
+    "${ENV_ARGS[@]}" \
     -w /mitgcm/verification \
     mitgcm:latest \
-    /bin/bash
+    /bin/bash "${SHELL_ARGS[@]}"

@@ -1,8 +1,5 @@
 FROM debian:bookworm-slim
 
-# Build arguments for MPI architecture (defaults: ARM64 for backward compatibility)
-ARG MPI_ARCH=aarch64-linux-gnu
-
 # Use bash as the default shell
 SHELL ["/bin/bash", "-c"]
 
@@ -32,6 +29,11 @@ RUN apt-get update && \
     libnetcdf-mpi-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Architecture-independent path to the OpenMPI headers (Debian keeps them in
+# /usr/lib/<arch>-linux-gnu/openmpi/include, e.g. x86_64 or aarch64)
+RUN ln -s "/usr/lib/$(uname -m)-linux-gnu/openmpi/include" /usr/local/include/openmpi && \
+    test -f /usr/local/include/openmpi/mpi.h
+
 # Create a non-root user
 RUN useradd -ms /bin/bash mitgcm
 USER mitgcm
@@ -47,8 +49,8 @@ WORKDIR /mitgcm/verification
 # Set environment variables for NetCDF and MPI (installed via apt)
 ENV NETCDF_ROOT=/usr
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mitgcm/tools
-ENV MPI_INC_DIR=/usr/lib/${MPI_ARCH}/openmpi/include
-ENV MPIINCLUDEDIR=/usr/lib/${MPI_ARCH}/openmpi/include
+ENV MPI_INC_DIR=/usr/local/include/openmpi
+ENV MPIINCLUDEDIR=/usr/local/include/openmpi
 
 # Detect architecture and set appropriate optfile
 RUN ARCH=$(uname -m) && \
