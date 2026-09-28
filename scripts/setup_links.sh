@@ -14,8 +14,8 @@ if [[ "$1" == "-h" || "$1" == "--help" || -z "$TARGET_DIR" ]]; then
     echo "Usage: $0 /path/to/MITgcm/verification [optfile]"
     echo ""
     echo "One-time setup: symlinks this repo's scripts and README into your"
-    echo "MITgcm verification/ directory, and copies the Dockerfile there"
-    echo "(Docker needs a real file, not a symlink, as its build context)."
+    echo "MITgcm verification/ directory. (docker_build.sh builds the image"
+    echo "from this repo's Dockerfile, so no copy is placed there.)"
     echo ""
     echo "optfile is optional; if omitted, the architecture (ARM64/x86_64) is"
     echo "auto-detected and a matching build-options file is suggested."
@@ -152,11 +152,6 @@ SCRIPT_FILES=(
     "compare_results.sh"
 )
 
-# Files to copy from root directory (Docker doesn't follow symlinks for -f flag)
-COPY_FILES=(
-    "Dockerfile"
-)
-
 # Files to link from root directory (documentation)
 DOC_FILES=(
     "README.md"
@@ -178,29 +173,14 @@ for file in "${SCRIPT_FILES[@]}"; do
     fi
 done
 
-# Copy files that need to be actual files (not symlinks)
-# These files are always overwritten to ensure they're up-to-date
-for file in "${COPY_FILES[@]}"; do
-    SOURCE="$REPO_DIR/$file"
-    DEST="$TARGET_DIR/$file"
-
-    if [ ! -f "$SOURCE" ]; then
-        echo "  ✗ $file (source not found: $SOURCE)"
-        echo ""
-        echo "Error: Required file not found in repository: $file"
-        echo "Expected location: $SOURCE"
-        exit 1
-    fi
-
-    if [ -e "$DEST" ]; then
-        rm -f "$DEST"
-        cp "$SOURCE" "$DEST"
-        echo "  ↻ $file (updated)"
-    else
-        cp "$SOURCE" "$DEST"
-        echo "  ✓ $file (copied)"
-    fi
-done
+# Earlier versions copied the Dockerfile here. docker_build.sh never used
+# that copy (it builds from this repo), so remove it before it goes stale --
+# but only if it is recognizably this repo's Dockerfile.
+if [ -f "$TARGET_DIR/Dockerfile" ] && [ ! -L "$TARGET_DIR/Dockerfile" ] && \
+   grep -q "MITgcm will be mounted at runtime at /mitgcm" "$TARGET_DIR/Dockerfile"; then
+    rm -f "$TARGET_DIR/Dockerfile"
+    echo "  ✗ Dockerfile (removed old copy; the image is built from $REPO_DIR/Dockerfile)"
+fi
 
 # Create symlinks for documentation files
 for file in "${DOC_FILES[@]}"; do

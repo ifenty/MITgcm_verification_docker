@@ -22,13 +22,15 @@ WORKDIR=""
 JOBS=""
 SKIP_BUILD=false
 CLEANUP=false
-GROUPS_SELECTED="SER MPI INP CMP MOD INT"
-ALL_GROUPS="SER MPI INP CMP MOD INT"
+TAF_DIR=""
+GROUPS_SELECTED="SER MPI INP CMP MOD INT TAF"
+ALL_GROUPS="SER MPI INP CMP MOD INT TAF"
 
 # Experiments used (all small; each compiles in well under a minute)
 EXP_SERIAL="1D_ocean_ice_column"          # serial, seaice/kpp, tr_checklist hSIav
 EXP_MPI="tutorial_barotropic_gyre"        # SIZE.h_mpi 2x2 = 4 processes
 EXP_INPUT="adjustment.cs-32x32x1"         # prepare_run + input.nlfs + data.exch2.mpi
+EXP_TAF="1D_ocean_ice_column"             # code_ad/ + input_ad/, adjoint and TLM references
 
 usage() {
     cat <<EOF
@@ -49,6 +51,9 @@ Options:
                            (PRE, INS and FIN always run; CMP implies SER)
   --skip-build             Reuse the existing mitgcm:latest image instead of
                            running docker_build.sh (INS-05 then only verifies it)
+  --taf-dir <path>         TAF installation (directory holding staf) for the TAF
+                           group; without it the TAF checks are skipped. Needs a
+                           working TAF server key in ~/.ssh.
   --cleanup                Delete the MITgcm clone at the end if every check
                            passed (logs and summaries are kept)
   --list                   List all checks and exit
@@ -66,7 +71,7 @@ list_checks() {
 ID      GROUP  DESCRIPTION
 PRE-01  PRE    Prerequisites: docker daemon reachable, git available
 INS-01  INS    Fresh MITgcm clone
-INS-02  INS    setup_links.sh installs script symlinks, README link, Dockerfile copy
+INS-02  INS    setup_links.sh installs script symlinks and README link (no Dockerfile copy)
 INS-03  INS    setup_links.sh re-run is idempotent
 INS-04  INS    Every script's -h/--help exits 0 and prints usage
 INS-05  INS    docker_build.sh builds mitgcm:latest with gfortran, mpirun, MPI headers
@@ -92,7 +97,11 @@ INT-01  INT    docker_run_interactive.sh with piped commands: mounts, OPTFILE,
                a manual genmake2/make build works
 INT-02  INT    -code with symlinks: dangling without -dereference, real files with it
 INT-03  INT    -taf_dir: staf on PATH, ~/.ssh mounted read-only
-FIN-01  FIN    MITgcm clone left clean: no tracked-file changes, no code_orig/, no tr_* dirs
+TAF-01  TAF    -adm compile (real TAF, needs --taf-dir): mitgcmuv_ad, KIND=adm,
+               code_ad/ untouched, no tr_* leftovers
+TAF-02  TAF    -adm run + compare PASS and digits == testreport -adm digits
+TAF-03  TAF    -tlm compile/run + compare PASS and digits == testreport -tlm digits
+FIN-01  FIN    MITgcm clone left clean: no tracked-file changes, no code*_orig/, no tr_* dirs
 EOF
 }
 
@@ -104,6 +113,7 @@ while [ $# -gt 0 ]; do
         --jobs) JOBS="$2"; shift 2 ;;
         --groups) GROUPS_SELECTED="$(echo "$2" | tr ',' ' ' | tr '[:lower:]' '[:upper:]')"; shift 2 ;;
         --skip-build) SKIP_BUILD=true; shift ;;
+        --taf-dir) TAF_DIR="$2"; shift 2 ;;
         --cleanup) CLEANUP=true; shift ;;
         --list) list_checks; exit 0 ;;
         -h|--help) usage; exit 0 ;;
@@ -115,6 +125,15 @@ for g in $GROUPS_SELECTED; do
     [[ " $ALL_GROUPS " == *" $g "* ]] || { echo "Unknown group: $g (valid: $ALL_GROUPS)"; exit 2; }
 done
 [[ " $GROUPS_SELECTED " == *" CMP "* && " $GROUPS_SELECTED " != *" SER "* ]] && GROUPS_SELECTED="SER $GROUPS_SELECTED"
+
+if [ -n "$TAF_DIR" ]; then
+    [[ "$TAF_DIR" == /* ]] || TAF_DIR="$(cd "$TAF_DIR" 2>/dev/null && pwd)"
+    [ -x "$TAF_DIR/staf" ] || { echo "--taf-dir: no executable staf in '$TAF_DIR'"; exit 2; }
+fi
+# testreport oracle runs of TAF builds need TAF and the TAF server key
+TAF_DOCKER_ARGS=()
+[ -n "$TAF_DIR" ] && TAF_DOCKER_ARGS=(-v "$TAF_DIR:/taf" -v "$HOME/.ssh:/home/mitgcm/.ssh:ro"
+    -e "PATH=/taf:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mitgcm/tools")
 
 if [ -z "$JOBS" ]; then
     JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
@@ -171,6 +190,8 @@ run_check() {
     DETAIL=""
     if [[ "$group" != PRE && "$group" != INS && "$group" != FIN && " $GROUPS_SELECTED " != *" $group "* ]]; then
         status=SKIP; detail="group $group not selected"
+    elif [ "$group" = TAF ] && [ -z "$TAF_DIR" ]; then
+        status=SKIP; detail="needs --taf-dir <path>"
     else
         for dep in "$@"; do
             if [ "$(get_status "$dep")" != PASS ]; then
@@ -222,17 +243,22 @@ digits_of() { sed -n 's/^ *Matching digits: \([0-9N/O]*\).*/\1/p' "$1" | head -1
 
 # testreport oracle: prints "<test-name> <digits>" for each test it ran.
 # $1 experiment, $2.. extra testreport arguments
+# Log: logs/oracle_<exp>.log, or logs/oracle_<exp>_<kind>.log for -adm / -tlm
 oracle() {
     local exp="$1"; shift
-    docker run --rm -v "$MITGCM:/mitgcm" mitgcm:latest bash -c "
+    local log="$LOGS/oracle_${exp}.log"
+    [[ " $* " == *" -adm "* ]] && log="$LOGS/oracle_${exp}_adm.log"
+    [[ " $* " == *" -tlm "* ]] && log="$LOGS/oracle_${exp}_tlm.log"
+    docker run --rm -v "$MITGCM:/mitgcm" "${TAF_DOCKER_ARGS[@]}" mitgcm:latest bash -c "
         cd /mitgcm/verification
         ./testreport -t $exp -optfile /mitgcm/tools/build_options/$OPTFILE_NAME -j $JOBS $* > /tmp/tr.log 2>&1
         cat /tmp/tr.log
         rm -rf tr_\$(hostname)_*
-    " > "$LOGS/oracle_${exp}.log" 2>&1
+    " > "$log" 2>&1
     # summary lines look like: "Y Y Y Y>13<16 16 ... pass  tutorial_barotropic_gyre"
-    awk 'NF >= 2 && ($(NF-1) == "pass" || $(NF-1) == "FAIL" || $(NF-1) == "N/O") && match($0, />[0-9]+</) {
-            print $NF, substr($0, RSTART + 1, RLENGTH - 2) }' "$LOGS/oracle_${exp}.log"
+    # (adjoint runs append "  (e=0, w=0, ...)", which is dropped first)
+    sed 's/  *(e=.*)$//' "$log" | awk 'NF >= 2 && ($(NF-1) == "pass" || $(NF-1) == "FAIL" || $(NF-1) == "N/O") && match($0, />[ 0-9]+</) {
+            d = substr($0, RSTART + 1, RLENGTH - 2); gsub(/ /, "", d); print $NF, d }'
 }
 
 # Lookup from oracle output: $1 = oracle lines, $2 = test name
@@ -269,8 +295,8 @@ check_INS_02() {
         [ -L "$V/$s" ] && [ -x "$V/$s" ] || fail "$s not linked" || return 1
         [ "$(readlink "$V/$s")" = "$REPO_ROOT/scripts/$s" ] || fail "$s links to $(readlink "$V/$s")" || return 1
     done
-    [ -f "$V/Dockerfile" ] && [ ! -L "$V/Dockerfile" ] || fail "Dockerfile not copied as a real file" || return 1
-    cmp -s "$V/Dockerfile" "$REPO_ROOT/Dockerfile" || fail "copied Dockerfile differs" || return 1
+    # docker_build.sh builds from the repo's Dockerfile; no copy belongs here
+    [ ! -e "$V/Dockerfile" ] || fail "a Dockerfile was copied into verification/" || return 1
     # MITgcm ships its own verification/README.md; setup_links must not replace it
     [ -e "$V/README.md" ] || fail "README.md missing" || return 1
 }
@@ -556,12 +582,50 @@ check_INT_03() {
     [ ! -e "$h/.ssh/write_test" ] || fail "container wrote into ~/.ssh" || return 1
 }
 
+# TAF checks: $1 = adm | tlm
+taf_compile() {
+    local kind="$1" bin
+    [ "$kind" = adm ] && bin=mitgcmuv_ad || bin=mitgcmuv_ftl
+    x ./experiment_compile.sh "$EXP_TAF" -"$kind" -taf_dir "$TAF_DIR" -j "$JOBS" || fail "-$kind compile exited non-zero" || return 1
+    local b="$V/$EXP_TAF/build_docker_$kind"
+    [ -x "$b/$bin" ] || fail "no $bin in build_docker_$kind/" || return 1
+    grep -q "^KIND=$kind$" "$b/build_info.txt" || fail "build_info.txt missing KIND=$kind" || return 1
+    grep -qi "generated by TAF" "$b/compile.log" "$V/$EXP_TAF/build/make.tr_log" 2>/dev/null || \
+        grep -q "staf" "$V/$EXP_TAF/build/make.tr_log" || fail "no sign of TAF in the build log" || return 1
+    # tracked files unchanged and nothing added (a -mods swap would show here too)
+    [ -z "$(git -C "$MITGCM" status --porcelain -- "verification/$EXP_TAF/code_ad")" ] || fail "code_ad/ changed during the build" || return 1
+    [ -z "$(find "$V" -maxdepth 1 -type d -name 'tr_*')" ] || fail "testreport tr_* directories left in verification/" || return 1
+}
+
+taf_run_compare() {
+    local kind="$1"
+    x ./experiment_run_no_compile.sh "$EXP_TAF" -"$kind" || fail "-$kind run exited non-zero" || return 1
+    local o="$V/$EXP_TAF/output_docker_$kind"
+    grep -q "^KIND=$kind$" "$o/run_info.txt" || fail "run_info.txt missing KIND=$kind" || return 1
+    grep -q "^INPUT_DIR=input_ad$" "$o/run_info.txt" || fail "run did not default to input_ad" || return 1
+    ./compare_results.sh "$EXP_TAF" -"$kind" > "$FIX/taf_${kind}_cmp.txt" 2>&1; local rc=$?
+    cat "$FIX/taf_${kind}_cmp.txt"
+    [ $rc -eq 0 ] || fail "compare_results.sh -$kind FAIL (digits $(digits_of "$FIX/taf_${kind}_cmp.txt"))" || return 1
+    grep -q "results/output_$kind.txt" "$FIX/taf_${kind}_cmp.txt" || fail "not compared with results/output_$kind.txt" || return 1
+    local ours ref orc
+    ours="$(digits_of "$FIX/taf_${kind}_cmp.txt")"
+    orc="$(oracle "$EXP_TAF" -"$kind")"; echo "oracle: $orc"
+    ref="$(oracle_digits "$orc" "$EXP_TAF")"
+    [ -n "$ref" ] || fail "testreport -$kind produced no result (see logs/oracle_${EXP_TAF}_$kind.log)" || return 1
+    [ "$ours" = "$ref" ] || fail "compare_results.sh says $ours digits, testreport -$kind says $ref" || return 1
+    note "$ours digits (testreport -$kind: $ref)"
+}
+
+check_TAF_01() { cd "$V" || return 1; taf_compile adm; }
+check_TAF_02() { cd "$V" || return 1; taf_run_compare adm; }
+check_TAF_03() { cd "$V" || return 1; taf_compile tlm && taf_run_compare tlm; }
+
 check_FIN_01() {
     [ -d "$MITGCM" ] || fail "no MITgcm clone" || return 1
     local changes; changes="$(git_tracked_changes)"
     echo "tracked changes: ${changes:-none}"
     [ -z "$changes" ] || fail "tracked files modified: $(echo $changes)" || return 1
-    [ -z "$(find "$V" -maxdepth 2 -type d -name code_orig)" ] || fail "code_orig/ directory left behind" || return 1
+    [ -z "$(find "$V" -maxdepth 2 -type d -name 'code*_orig')" ] || fail "code_orig/ or code_ad_orig/ directory left behind" || return 1
     [ -z "$(find "$V" -maxdepth 1 -type d -name 'tr_*')" ] || fail "tr_* directories left in verification/" || return 1
 }
 
@@ -603,6 +667,9 @@ run_check MOD-03 MOD "-mods nonexistent dir rejected"                      check
 run_check INT-01 INT "Interactive (piped): mounts, OPTFILE, manual build"  check_INT_01 INS-05
 run_check INT-02 INT "Interactive -code with/without -dereference"         check_INT_02 INS-05
 run_check INT-03 INT "Interactive -taf_dir: staf on PATH, ~/.ssh read-only" check_INT_03 INS-05
+run_check TAF-01 TAF "-adm compile with real TAF ($EXP_TAF)"              check_TAF_01 INS-05
+run_check TAF-02 TAF "-adm run + compare == testreport -adm"              check_TAF_02 TAF-01
+run_check TAF-03 TAF "-tlm compile/run + compare == testreport -tlm"      check_TAF_03 INS-05
 run_check FIN-01 FIN "MITgcm clone left clean"                             check_FIN_01 INS-01
 
 TOTAL_SECS=$(( $(date +%s) - STARTED ))
