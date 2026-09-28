@@ -220,6 +220,7 @@ built-in help, including worked examples.
 ```
 MITgcm_verification_docker/
 ├── README.md
+├── VERIFY_NEW_INSTALL_README.md    # how to run and read the new-install stress test
 ├── LICENSE
 ├── Dockerfile
 ├── scripts/
@@ -232,8 +233,7 @@ MITgcm_verification_docker/
 └── tests/
     ├── test_script_integration.sh   # argument handling (no Docker needed)
     ├── test_regressions.sh          # regression tests with a mock docker (no Docker needed)
-    ├── new_install_stress_test.sh   # end-to-end test on a fresh MITgcm clone (real Docker)
-    └── STRESS_TEST.md               # how to run and read the stress test
+    └── new_install_stress_test.sh   # end-to-end test on a fresh MITgcm clone (real Docker)
 ```
 
 `setup_links.sh` symlinks the five user-facing scripts and this README into
@@ -417,7 +417,7 @@ tests/new_install_stress_test.sh     # full end-to-end check on a fresh MITgcm c
 The stress test clones MITgcm, installs these tools the way a new user would,
 and checks every documented behaviour against real builds and runs, including
 cross-checking `compare_results.sh` against testreport itself. See
-[tests/STRESS_TEST.md](tests/STRESS_TEST.md) for options, the list of checks
+[VERIFY_NEW_INSTALL_README.md](VERIFY_NEW_INSTALL_README.md) for options, the list of checks
 and how to read the results.
 
 ## Troubleshooting

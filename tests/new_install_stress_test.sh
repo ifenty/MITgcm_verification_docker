@@ -8,7 +8,7 @@
 # compare_results.sh against MITgcm's own testreport.
 #
 # Documentation (options, check catalogue, output format, triage):
-#   tests/STRESS_TEST.md
+#   VERIFY_NEW_INSTALL_README.md (repository root)
 #
 # Exit status: 0 = all checks passed (skips allowed), 1 = at least one check
 # failed, 2 = could not start (bad options or missing prerequisites).
@@ -36,7 +36,7 @@ Usage: $0 [options]
 
 End-to-end "new install" test: fresh MITgcm clone -> setup_links.sh ->
 docker_build.sh -> compile/run/compare real experiments -> verify results
-against testreport. See tests/STRESS_TEST.md.
+against testreport. See VERIFY_NEW_INSTALL_README.md.
 
 Options:
   --mitgcm-src <url|path>  MITgcm git repository to clone
