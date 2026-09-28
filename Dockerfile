@@ -5,7 +5,8 @@ SHELL ["/bin/bash", "-c"]
 
 USER root
 
-# Install required packages including MPI
+# Install required packages including MPI (openssh-client: TAF's staf
+# script reaches the TAF server over ssh)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     build-essential \
@@ -27,6 +28,7 @@ RUN apt-get update && \
     libopenmpi-dev \
     openmpi-bin \
     libnetcdf-mpi-dev \
+    openssh-client \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Architecture-independent path to the OpenMPI headers (Debian keeps them in

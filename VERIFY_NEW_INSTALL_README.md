@@ -20,10 +20,10 @@ decide whether it passed, and triage failures without reading the script.
 | Could not start | exit status `2` (bad option, `--workdir` already has `MITgcm/`) |
 | Machine-readable results | `<workdir>/summary.json`, `<workdir>/summary.tsv` |
 | Per-check logs | `<workdir>/logs/<CHECK-ID>.log` |
-| testreport oracle logs | `<workdir>/logs/oracle_<experiment>.log` |
-| Typical run time | 2–3 min with a cached image and 16 cores; add ~5 min for a first image build and ~30 s for the GitHub clone |
+| testreport oracle logs | `<workdir>/logs/oracle_<experiment>.log` (`oracle_<experiment>_adm.log` / `_tlm.log` for the TAF group) |
+| Typical run time | 2–3 min with a cached image and 16 cores; add ~5 min for a first image build, ~30 s for the GitHub clone, and ~7 min for the TAF group (`--taf-dir`; each adjoint/TLM build is a round trip to the TAF server) |
 | Disk space | ~1 GB in the work directory (MITgcm clone + builds) |
-| Network | Needed only to clone from GitHub (default) and for a first image build |
+| Network | Needed only to clone from GitHub (default), for a first image build, and to reach the TAF server (`fastopt.de`, ssh) in the TAF group |
 
 The work directory is printed at the start of the run. Unless `--workdir` is
 given it is a new directory under `$TMPDIR` (or `/tmp`).
@@ -35,6 +35,9 @@ given it is a new directory under `$TMPDIR` (or `/tmp`).
 - ARM64 or x86_64 host
 - Network access to GitHub, or a local MITgcm repository passed with
   `--mitgcm-src`
+- For the TAF group only: a TAF installation (`--taf-dir`) whose server key
+  (`~/.ssh/taf`) works from this host (`staf -test`), with `fastopt.de` in
+  `~/.ssh/known_hosts`
 
 ## Running it
 
@@ -50,6 +53,9 @@ tests/new_install_stress_test.sh --workdir /tmp/stress --cleanup
 
 # Only some groups (PRE, INS and FIN always run)
 tests/new_install_stress_test.sh --groups SER,MPI --skip-build
+
+# Include the real-TAF adjoint / tangent-linear checks
+tests/new_install_stress_test.sh --taf-dir /path/to/TAF
 ```
 
 | Option | Meaning |
@@ -58,7 +64,8 @@ tests/new_install_stress_test.sh --groups SER,MPI --skip-build
 | `--mitgcm-ref <ref>` | Branch or tag to check out (default: the repository's default branch). |
 | `--workdir <dir>` | Work directory. Created if missing; must not already contain `MITgcm/`. |
 | `--jobs <N>` | `make -j` value (default: number of CPUs, capped at 16). |
-| `--groups <G,...>` | Run only these groups: `SER MPI INP CMP MOD INT`. `CMP` automatically adds `SER`. Checks in unselected groups are reported as `SKIP`. |
+| `--groups <G,...>` | Run only these groups: `SER MPI INP CMP MOD INT TAF`. `CMP` automatically adds `SER`. Checks in unselected groups are reported as `SKIP`. |
+| `--taf-dir <path>` | TAF installation (the directory holding `staf`) for the `TAF` group. Without it the TAF checks are reported as `SKIP` (`needs --taf-dir <path>`). Needs a TAF server key in `~/.ssh` that works from this host (`staf -test`). |
 | `--skip-build` | Do not run `docker_build.sh`; reuse the existing `mitgcm:latest` image. Use only when the image was built from the current Dockerfile. |
 | `--cleanup` | If every check passed, delete the MITgcm clone and fixtures at the end (logs and summaries are kept). |
 | `--list` | Print the check catalogue and exit. |
@@ -69,8 +76,10 @@ tests/new_install_stress_test.sh --groups SER,MPI --skip-build
   `mitgcm:latest`** from this repository's Dockerfile. This is the same image
   the scripts use for normal work.
 - Nothing else outside the work directory is modified. The test never touches
-  the user's own MITgcm checkout (it clones), and the `~/.ssh` check uses a
-  fake `HOME` inside the work directory.
+  the user's own MITgcm checkout (it clones), and the `~/.ssh` check (INT-03)
+  uses a fake `HOME` inside the work directory. With `--taf-dir`, the TAF
+  checks mount the real `~/.ssh` **read-only** and send the experiment's
+  source to the TAF server, as any TAF build does.
 - `$TMPDIR` is set to `<workdir>/tmp` for all scripts, so leftover temp files
   are detectable and contained.
 
@@ -81,6 +90,7 @@ tests/new_install_stress_test.sh --groups SER,MPI --skip-build
 | `1D_ocean_ice_column` | Serial build; has a `tr_checklist` whose deciding variable (`hSIav`) is not the first monitor field; source for the negative controls and `-mods` tests. |
 | `tutorial_barotropic_gyre` | `SIZE.h_mpi` with nPx=2, nPy=2 → 4 MPI processes. |
 | `adjustment.cs-32x32x1` | `input/prepare_run` (links grid files from another experiment), a secondary `input.nlfs` directory layered on `input/`, and `data.exch2.mpi`. |
+| `1D_ocean_ice_column` (TAF group) | Small `code_ad/` + `input_ad/` with both `results/output_adm.txt` and `output_tlm.txt.gz`; its `input_ad/prepare_run` links files from `input/`. |
 
 ## Check catalogue
 
@@ -92,7 +102,7 @@ is always the first `FAIL` above it.
 |---|---|---|---|
 | PRE-01 | — | Prerequisites | `docker info` and `git --version` succeed |
 | INS-01 | PRE-01 | Fresh MITgcm clone | `git clone` succeeds and `verification/1D_ocean_ice_column` exists |
-| INS-02 | INS-01 | `setup_links.sh` installs the tools | The 5 scripts are symlinks to this repo's `scripts/`, executable; `Dockerfile` is a real file identical to the repo's |
+| INS-02 | INS-01 | `setup_links.sh` installs the tools | The 5 scripts are symlinks to this repo's `scripts/`, executable; no `Dockerfile` is copied into `verification/` (the image is built from the repo's) |
 | INS-03 | INS-02 | `setup_links.sh` can be re-run | Second run exits 0 and reports `already linked` |
 | INS-04 | INS-02 | "Every script accepts `-h`/`--help`" | Both flags exit 0 and print usage, for all scripts including `setup_links.sh` |
 | INS-05 | INS-02 | `docker_build.sh` builds a working image | Build succeeds; image has gfortran, `mpirun`, and `mpi.h` in `$MPI_INC_DIR` |
@@ -114,10 +124,14 @@ is always the first `FAIL` above it.
 | INT-01 | INS-05 | `docker_run_interactive.sh` (piped stdin) | Starts in `/mitgcm/verification`, `$OPTFILE` set, MITgcm mounted, a manual `genmake2`/`make depend`/`make` build produces `mitgcmuv` |
 | INT-02 | INS-05 | `-code` / `-dereference` | Without `-dereference` the external symlinks dangle in the container; with it they are real files; temp dir removed |
 | INT-03 | INS-05 | `-taf_dir` and read-only `~/.ssh` | `staf` resolves to `/taf/staf` and runs (mock `staf`); `~/.ssh` readable but not writable in the container |
-| FIN-01 | INS-01 | The scripts leave the MITgcm checkout clean | No tracked-file changes (`git status --untracked-files=no`), no `code_orig/`, no `tr_*` directories |
+| TAF-01 | INS-05 | `-adm` builds the TAF adjoint (needs `--taf-dir`) | Exit 0; `build_docker_adm/mitgcmuv_ad`; `build_info.txt` has `KIND=adm`; the build log shows TAF ran; `code_ad/` unchanged; no `tr_*` directories left |
+| TAF-02 | TAF-01 | `-adm` run and adjoint comparison | Run exit 0 with `input_ad` and `KIND=adm` in `run_info.txt`; compare uses `results/output_adm.txt`, PASSes, and its digits equal `testreport -adm`'s (deciding variable `admGrd`) |
+| TAF-03 | INS-05 | `-tlm` compile, run and comparison | `build_docker_tlm/mitgcmuv_ftl` with `KIND=tlm`; run exit 0; compare uses `results/output_tlm.txt`, PASSes, digits equal `testreport -tlm`'s |
+| FIN-01 | INS-01 | The scripts leave the MITgcm checkout clean | No tracked-file changes (`git status --untracked-files=no`), no `code_orig/` or `code_ad_orig/`, no `tr_*` directories |
 
-A real TAF installation is not needed: INT-03 uses a mock `staf` script and
-verifies only what the scripts do (mount, `PATH`, read-only `~/.ssh`).
+INT-03 needs no TAF installation: it uses a mock `staf` script and verifies
+only what the interactive script does (mount, `PATH`, read-only `~/.ssh`).
+The TAF group does a real TAF round trip and runs only with `--taf-dir`.
 
 ## Output formats
 
@@ -193,12 +207,16 @@ where the number between `>` and `<` is the deciding variable's digits.
 | MPI-01 "modified tracked files" | `git -C <workdir>/MITgcm status` | Compile script writing into `code/` |
 | MOD-01/02 temp files | `ls <workdir>/tmp` | Temp dereference directory not cleaned up |
 | INT-* | `logs/INT-*.log` | Docker cannot mount the path (Docker Desktop file-sharing settings on macOS) |
-| FIN-01 | `git -C <workdir>/MITgcm status`, `find <workdir>/MITgcm/verification -name code_orig` | A script modified or left files in the checkout |
+| TAF-01, TAF-03 compile | `<workdir>/MITgcm/verification/1D_ocean_ice_column/build_docker_adm/compile.log` (`build_docker_tlm/`), then `.../build/make.tr_log` | TAF server unreachable or key refused (`staf -test` on the host); `Host key verification failed` = `fastopt.de` missing from `~/.ssh/known_hosts` |
+| TAF-02, TAF-03 digits differ | `logs/oracle_1D_ocean_ice_column_adm.log` / `_tlm.log` | A change to the adjoint/TLM comparison in `compare_results.sh` |
+| FIN-01 | `git -C <workdir>/MITgcm status`, `find <workdir>/MITgcm/verification -name 'code*_orig'` | A script modified or left files in the checkout |
 
 The MITgcm clone is left in place after a failure (even with `--cleanup`), so
 builds and outputs can be inspected under `<workdir>/MITgcm/verification/`.
 Test-created directories use the prefix `*_stress_*` (e.g.
-`output_stress_mods`, `build_stress_broken`).
+`output_stress_mods`, `build_stress_broken`), except that the TAF group uses
+the default `build_docker_adm` / `build_docker_tlm` and `output_docker_adm` /
+`output_docker_tlm`, since those defaults are part of what it checks.
 
 ## Related tests
 

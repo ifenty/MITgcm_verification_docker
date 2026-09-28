@@ -78,22 +78,26 @@ DETAILED OPTIONS
     • Mounts ~/.ssh (read-only) for license key access
 
     Use case:
-    • Generate adjoint code (make adall)
-    • Generate tangent linear code (make ftlall)
-    • Automatic differentiation builds
+    • Generate adjoint code (make adall -> mitgcmuv_ad)
+    • Generate tangent linear code (make ftlall -> mitgcmuv_ftl)
+    • Debugging TAF builds by hand. For routine adjoint/TLM builds, use
+      experiment_compile.sh -adm / -tlm instead (no interactive shell).
 
     Example:
         ./docker_run_interactive.sh -taf_dir /Users/you/TAF
 
     Inside container:
         which staf              # Check TAF is available
+        staf -test              # Check the TAF server accepts your key
         cd lab_sea/build
-        ../../../tools/genmake2 -mods=/custom_code -optfile=$OPTFILE
+        ../../../tools/genmake2 -mods=../code_ad -optfile=$OPTFILE
         make depend
-        make adall              # Build adjoint
+        make adall              # Build adjoint (mitgcmuv_ad)
 
     Security:
     • ~/.ssh mounted read-only (container cannot modify SSH config)
+    • Because of that, the TAF server (fastopt.de) must already be in
+      ~/.ssh/known_hosts: run 'staf -test' once on the host first
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -167,6 +171,10 @@ EXAMPLES
 
 7. Non-interactive (commands piped on stdin, no terminal needed):
     echo 'cd 1D_ocean_ice_column && ls' | ./docker_run_interactive.sh
+   The piped commands are the shell's stdin, so a command that reads stdin
+   (e.g. testreport) swallows the ones after it; give it '< /dev/null':
+    echo './testreport -adm -t 1D_ocean_ice_column -of $OPTFILE < /dev/null' |
+        ./docker_run_interactive.sh -taf_dir /path/to/TAF
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 INSIDE THE CONTAINER
@@ -191,10 +199,14 @@ Build with standard code:
     make depend
     make
 
-If TAF is available:
+If TAF is available (adjoint code lives in <experiment>/code_ad):
     which staf                  # Verify TAF in PATH
-    make adall                  # Build adjoint
-    make ftlall                 # Build tangent linear
+    cd <experiment>/build
+    ../../../tools/genmake2 -mods=../code_ad -optfile=$OPTFILE
+    make depend
+    make adall                  # Build adjoint        -> mitgcmuv_ad
+    make ftlall                 # Build tangent linear -> mitgcmuv_ftl
+    Or run MITgcm's own test:   ./testreport -adm -t <experiment> -of $OPTFILE
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 TROUBLESHOOTING
@@ -210,8 +222,10 @@ TROUBLESHOOTING
 
 TAF license errors:
     → SSH keys not accessible or invalid
-    → Check: ~/.ssh directory exists and contains keys
+    → Check: ~/.ssh directory exists and contains the key staf uses (~/.ssh/taf)
     → Check: Key permissions (usually 600 for private keys)
+    → "Host key verification failed": fastopt.de is missing from
+      ~/.ssh/known_hosts; run 'staf -test' once on the host
 
 Path must be absolute:
     → Relative paths like ./code or ../project/code are rejected
@@ -433,6 +447,15 @@ if [[ -n "$TAF_DIR" ]]; then
     # Mount ~/.ssh for TAF license key (read-only for security)
     if [[ -d "$HOME/.ssh" ]]; then
         MOUNT_ARGS+=(-v "$HOME/.ssh:/home/mitgcm/.ssh:ro")
+        [[ -f "$HOME/.ssh/taf" ]] || \
+            echo "Warning: ~/.ssh/taf (the key staf uses) not found; TAF will likely fail"
+        # ~/.ssh is read-only in the container, so ssh there cannot record a
+        # new host key: the TAF server must already be in known_hosts.
+        if command -v ssh-keygen > /dev/null 2>&1 && \
+           ! ssh-keygen -F fastopt.de -f "$HOME/.ssh/known_hosts" > /dev/null 2>&1; then
+            echo "Warning: fastopt.de is not in ~/.ssh/known_hosts; staf will fail in the"
+            echo "         container. Run '$TAF_DIR/staf -test' once on this host first."
+        fi
     else
         echo "Warning: ~/.ssh directory not found, TAF may not have access to license key"
     fi

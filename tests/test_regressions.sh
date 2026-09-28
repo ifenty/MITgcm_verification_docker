@@ -4,8 +4,9 @@
 #
 # A mock 'docker' executable is put first on PATH. It records every call in
 # $MOCK_DOCKER_LOG and simulates the container side:
-#   - compile (script mentions testreport): creates mitgcmuv in the /build_output
-#     mount, or fails when MOCK_COMPILE=fail
+#   - compile (script mentions testreport): creates mitgcmuv (mitgcmuv_ad /
+#     mitgcmuv_ftl for testreport -adm / -tlm) in the /build_output mount, or
+#     fails when MOCK_COMPILE=fail
 #   - run (script mentions mitgcmuv): writes output.txt (serial) or
 #     STDOUT.0000 + mpirun.log (MPI) in the -w directory; MOCK_RUN selects
 #     normal | abnormal | crash
@@ -89,6 +90,25 @@ write_mon() {
     }' > "$f"
 }
 
+# Write a TAF adjoint / tangent-linear log with gradient-check lines.
+# write_ad_mon <file> <n_points> <adm|tlm> [scale] [grad_scale]
+#   scale multiplies every value; grad_scale additionally the AD/TL gradient
+write_ad_mon() {
+    local f="$1" n="$2" kind="$3" scale="${4:-1}" gscale="${5:-1}"
+    awk -v n="$n" -v k="$kind" -v s="$scale" -v g="$gscale" 'BEGIN {
+        P = (k == "adm") ? "ADM" : "TLM"
+        G = (k == "adm") ? "adjoint_gradient      " : "tangent-lin_grad      "
+        kd = (k == "adm") ? "ad" : "g_"
+        for (i = 1; i <= n; i++) {
+            printf "(PID.TID 0000.0001) %%MON dynstat_%stheta_mean         =   %.13E\n", kd, s * (2.0 + i / 3.0)
+            printf "(PID.TID 0000.0001)  %s  ref_cost_function      =  %.14E\n", P, s * 1.5e4
+            printf "(PID.TID 0000.0001)  %s  %s =  %.14E\n", P, G, s * g * (-7.0 + i / 9.0)
+            printf "(PID.TID 0000.0001)  %s  finite-diff_grad       =  %.14E\n", P, s * (-7.0 + i / 9.0)
+        }
+        print "PROGRAM MAIN: Execution ended Normally"
+    }' > "$f"
+}
+
 # Build a fresh fake MITgcm tree and install the scripts into it
 make_tree() {
     rm -rf "$MITGCM"
@@ -126,6 +146,19 @@ EOF
     mkdir -p "$e/input_nokpp"; echo "nokpp data" > "$e/input_nokpp/data"
     write_mon "$e/results/output.txt" 5
     write_mon "$e/results/output.alt.txt" 5 2
+    # experiment with TAF adjoint code (code_ad/, input_ad/, input_ad.alt/)
+    e="$VER/exp_ad"
+    mkdir -p "$e/code" "$e/code_ad" "$e/input" "$e/input_ad" "$e/input_ad.alt" "$e/results"
+    cp "$VER/exp_mpi/code/SIZE.h" "$e/code_ad/SIZE.h"
+    sed 's/nPy =   2/nPy =   1/' "$VER/exp_mpi/code/SIZE.h_mpi" > "$e/code_ad/SIZE.h_mpi"   # 2 procs
+    echo "fwd data" > "$e/input/data"
+    echo "ad data" > "$e/input_ad/data"
+    echo "ad data.ctrl" > "$e/input_ad/data.ctrl"
+    echo "alt ad data" > "$e/input_ad.alt/data"
+    write_ad_mon "$e/results/output_adm.txt" 4 adm
+    write_ad_mon "$e/results/output_adm.alt.txt" 4 adm 3
+    write_ad_mon "$e/results/output_tlm.txt" 4 tlm
+    gzip "$e/results/output_tlm.txt"
     "$SCRIPTS_DIR/setup_links.sh" "$VER" > "$SANDBOX/setup.log" 2>&1 < /dev/null
 }
 
@@ -165,7 +198,10 @@ if [[ "$SCRIPT" == *testreport* ]]; then
     echo "$SCRIPT" > "$(dirname "$MOCK_DOCKER_LOG")/last_compile_script.txt"
     [ "$MOCK_COMPILE" = fail ] && { echo "mock compile failure"; exit 1; }
     B="$(to_host /build_output)"
-    printf '#!/bin/bash\necho mock\n' > "$B/mitgcmuv"; chmod +x "$B/mitgcmuv"
+    BIN=mitgcmuv
+    [[ "$SCRIPT" == *" -adm "* ]] && BIN=mitgcmuv_ad
+    [[ "$SCRIPT" == *" -tlm "* ]] && BIN=mitgcmuv_ftl
+    printf '#!/bin/bash\necho mock\n' > "$B/$BIN"; chmod +x "$B/$BIN"
     echo "mock compile log" > "$B/compile.log"
     exit 0
 fi
@@ -381,6 +417,107 @@ check "unknown experiment: clean error, no 'basename: missing operand'" '[ $RC -
 
 # ---------------------------------------------------------------------------
 echo ""
+echo "=== TAF adjoint / tangent linear (-adm / -tlm) ==="
+# ---------------------------------------------------------------------------
+A="$VER/exp_ad"
+TAFH="$SANDBOX/tafhome"; mkdir -p "$TAFH/.ssh" "$SANDBOX/taf_ok" "$SANDBOX/taf_empty"
+printf '#!/bin/bash\necho mock staf\n' > "$SANDBOX/taf_ok/staf"; chmod +x "$SANDBOX/taf_ok/staf"
+touch "$TAFH/.ssh/taf"
+if command -v ssh-keygen > /dev/null 2>&1; then
+    ssh-keygen -q -t ed25519 -N '' -f "$SANDBOX/hostkey" > /dev/null 2>&1
+    echo "fastopt.de $(cut -d' ' -f1,2 "$SANDBOX/hostkey.pub")" > "$TAFH/.ssh/known_hosts"
+fi
+
+: > "$MOCK_DOCKER_LOG"
+HOME="$TAFH" run_cmd ./experiment_compile.sh exp_ad -adm
+check "-adm without -taf_dir (or TAF_DIR) is rejected before docker runs" '[ $RC -ne 0 ] && out_has "needs a TAF installation" && [ ! -s "$MOCK_DOCKER_LOG" ]'
+HOME="$TAFH" run_cmd ./experiment_compile.sh exp_ad -adm -taf_dir "$SANDBOX/taf_empty"
+check "-taf_dir without an executable staf is rejected" '[ $RC -ne 0 ] && out_has "no executable .staf."'
+HOME="$TAFH" run_cmd ./experiment_compile.sh exp_ad -adm -taf_dir taf_ok
+check "relative -taf_dir is rejected" '[ $RC -ne 0 ] && out_has "must be absolute"'
+HOME="$TAFH" run_cmd ./experiment_compile.sh exp_ad -taf_dir "$SANDBOX/taf_ok"
+check "-taf_dir without -adm/-tlm is rejected" '[ $RC -ne 0 ] && out_has "only used with -adm or -tlm"'
+HOME="$TAFH" run_cmd ./experiment_compile.sh exp_ad -adm -tlm -taf_dir "$SANDBOX/taf_ok"
+check "-adm and -tlm together are rejected" '[ $RC -ne 0 ] && out_has "cannot be combined"'
+HOME="$TAFH" run_cmd ./experiment_compile.sh exp_mpi -adm -taf_dir "$SANDBOX/taf_ok"
+check "-adm on an experiment without code_ad/ is rejected" '[ $RC -ne 0 ] && out_has "code_ad/, which does not exist"'
+
+: > "$MOCK_DOCKER_LOG"
+HOME="$TAFH" run_cmd ./experiment_compile.sh exp_ad -adm -taf_dir "$SANDBOX/taf_ok" -j 2
+check "-adm compile succeeds" '[ $RC -eq 0 ]'
+check "-adm passes -adm to testreport" 'grep -q -- "-norun -adm " "$SANDBOX/last_compile_script.txt"'
+check "-adm mounts the TAF dir at /taf and puts it first on PATH" 'grep -q -- "$SANDBOX/taf_ok:/taf" "$MOCK_DOCKER_LOG" && grep -q "PATH=/taf:" "$MOCK_DOCKER_LOG"'
+check "-adm mounts ~/.ssh read-only" 'grep -q -- "$TAFH/.ssh:/home/mitgcm/.ssh:ro" "$MOCK_DOCKER_LOG"'
+check "-adm builds mitgcmuv_ad into build_docker_adm" '[ -x "$A/build_docker_adm/mitgcmuv_ad" ] && grep -q "build/mitgcmuv_ad" "$SANDBOX/last_compile_script.txt"'
+check "build_info.txt records KIND=adm" 'grep -q "^KIND=adm$" "$A/build_docker_adm/build_info.txt"'
+check "-adm next-step hint includes -adm" 'out_has "experiment_run_no_compile.sh exp_ad -adm$"'
+if command -v ssh-keygen > /dev/null 2>&1; then
+    check "no known_hosts warning when fastopt.de is known" '! out_has "not in ~/.ssh/known_hosts"'
+    mv "$TAFH/.ssh/known_hosts" "$TAFH/.ssh/known_hosts.save"
+    HOME="$TAFH" run_cmd ./experiment_compile.sh exp_ad -adm -taf_dir "$SANDBOX/taf_ok"
+    check "warns when fastopt.de is missing from ~/.ssh/known_hosts" 'out_has "fastopt.de is not in ~/.ssh/known_hosts"'
+    mv "$TAFH/.ssh/known_hosts.save" "$TAFH/.ssh/known_hosts"
+fi
+TAF_DIR="$SANDBOX/taf_ok" HOME="$TAFH" run_cmd ./experiment_compile.sh exp_ad -tlm -j 2
+check "-tlm compile takes TAF_DIR from the environment" '[ $RC -eq 0 ] && grep -q -- "-norun -tlm " "$SANDBOX/last_compile_script.txt"'
+check "-tlm builds mitgcmuv_ftl into build_docker_tlm" '[ -x "$A/build_docker_tlm/mitgcmuv_ftl" ] && grep -q "^KIND=tlm$" "$A/build_docker_tlm/build_info.txt"'
+
+HOME="$TAFH" run_cmd ./experiment_compile.sh exp_ad -adm -mpi -taf_dir "$SANDBOX/taf_ok" -build build_ad_mpi
+check "-adm -mpi reads nPx*nPy from code_ad/SIZE.h_mpi" '[ $RC -eq 0 ] && grep -q -- "-MPI=2" "$SANDBOX/last_compile_script.txt"'
+cp -r "$A/code_ad" "$SANDBOX/mods_ad"
+HOME="$TAFH" run_cmd ./experiment_compile.sh exp_ad -adm -mods "$SANDBOX/mods_ad" -taf_dir "$SANDBOX/taf_ok" -build build_ad_mods
+check "-adm -mods temporarily replaces code_ad/ (not code/)" '[ $RC -eq 0 ] && grep -q "code_ad_orig" "$SANDBOX/last_compile_script.txt" && ! grep -q "EXP_DIR/code_orig" "$SANDBOX/last_compile_script.txt"'
+
+: > "$MOCK_DOCKER_LOG"
+run_cmd ./experiment_run_no_compile.sh exp_ad -adm
+check "-adm run succeeds with defaults" '[ $RC -eq 0 ] && out_has "ended normally"'
+check "-adm run defaults: input_ad -> output_docker_adm" '[ "$(readlink "$A/output_docker_adm/data")" = "../input_ad/data" ]'
+check "-adm run executes mitgcmuv_ad" 'grep -q "./mitgcmuv_ad > output.txt" "$MOCK_DOCKER_LOG"'
+check "run_info.txt records KIND=adm" 'grep -q "^KIND=adm$" "$A/output_docker_adm/run_info.txt"'
+run_cmd ./experiment_run_no_compile.sh exp_ad input_ad.alt -adm -output out_ad_alt
+check "input_ad.alt is layered on input_ad" '[ "$(readlink "$A/out_ad_alt/data")" = "../input_ad.alt/data" ] && [ "$(readlink "$A/out_ad_alt/data.ctrl")" = "../input_ad/data.ctrl" ]'
+run_cmd ./experiment_run_no_compile.sh exp_ad -build build_docker_adm
+check "forward run on an adjoint build dir points at -adm" '[ $RC -ne 0 ] && out_has "holds mitgcmuv_ad instead; run with -adm"'
+cp "$A/build_docker_tlm/mitgcmuv_ftl" "$A/build_docker_tlm/mitgcmuv_ad"
+run_cmd ./experiment_run_no_compile.sh exp_ad -adm -build build_docker_tlm
+check "-adm run on a build compiled with -tlm is rejected" '[ $RC -ne 0 ] && out_has "compiled as a .tlm. build"'
+run_cmd ./experiment_run_no_compile.sh exp_ad -tlm -output out_tl
+check "-tlm run executes mitgcmuv_ftl" '[ $RC -eq 0 ] && grep -q "./mitgcmuv_ftl > output.txt" "$MOCK_DOCKER_LOG"'
+run_cmd ./experiment_run_no_compile.sh exp_ad -adm -mpi 2 -build build_ad_mpi -output out_ad_mpi
+check "-adm MPI run uses mpirun on mitgcmuv_ad" '[ $RC -eq 0 ] && grep -q "mpirun --oversubscribe -np 2 ./mitgcmuv_ad" "$MOCK_DOCKER_LOG"'
+
+write_ad_mon "$A/output_docker_adm/output.txt" 4 adm
+run_cmd ./compare_results.sh exp_ad -adm
+check "adjoint compare PASSES against results/output_adm.txt" '[ $RC -eq 0 ] && out_has "results/output_adm.txt" && out_has "> admGrd"'
+check "adjoint compare checks adjoint fields (dynstat_adtheta_*)" 'out_has "dynstat_adtheta_mean *16"'
+run_cmd ./compare_results.sh exp_ad output_docker_adm
+check "adjoint kind is detected from run_info.txt without -adm" '[ $RC -eq 0 ] && out_has "Kind:       adjoint"'
+write_ad_mon "$A/output_docker_adm/output.txt" 4 adm 1 1.0001
+run_cmd ./compare_results.sh exp_ad -adm
+check "adjoint gradient off by 1e-4 FAILS" '[ $RC -ne 0 ] && out_has "Matching digits: 4"'
+write_ad_mon "$A/out_ad_alt/output.txt" 4 adm 3
+run_cmd ./compare_results.sh exp_ad out_ad_alt
+check "input_ad.alt run is compared with results/output_adm.alt.txt" '[ $RC -eq 0 ] && out_has "results/output_adm.alt.txt"'
+write_ad_mon "$A/out_tl/output.txt" 4 tlm
+run_cmd ./compare_results.sh exp_ad out_tl
+check "tangent-linear compare PASSES against gzipped results/output_tlm.txt" '[ $RC -eq 0 ] && out_has "results/output_tlm.txt" && out_has "> tlmGrd"'
+printf 'admCst admGrd\n' > "$A/input_ad/tr_checklist"
+run_cmd ./compare_results.sh exp_ad out_tl
+check "TLM renames adm* entries of tr_checklist to tlm*" '[ $RC -eq 0 ] && out_has "> tlmCst"'
+printf 'tlmFwd tlmGrd\n' > "$A/input_ad/tr_checklist.tlm"
+run_cmd ./compare_results.sh exp_ad out_tl
+check "tr_checklist.tlm overrides tr_checklist for TLM runs" '[ $RC -eq 0 ] && out_has "> tlmFwd"'
+rm -f "$A/input_ad/tr_checklist" "$A/input_ad/tr_checklist.tlm"
+run_cmd ./compare_results.sh exp_ad out_tl -adm
+check "-adm on a TLM run is rejected" '[ $RC -ne 0 ] && out_has "holds a .tlm. run"'
+
+mkdir -p "$SANDBOX/home2/.ssh"
+: > "$MOCK_DOCKER_LOG"
+HOME="$SANDBOX/home2" run_cmd ./docker_run_interactive.sh -taf_dir "$SANDBOX/taf_ok"
+check "interactive -taf_dir warns about a missing ~/.ssh/taf key" 'out_has "~/.ssh/taf (the key staf uses) not found"'
+
+# ---------------------------------------------------------------------------
+echo ""
 echo "=== docker_run_interactive.sh ==="
 # ---------------------------------------------------------------------------
 mkdir -p "$SANDBOX/home/.ssh" "$SANDBOX/taf"; touch "$SANDBOX/taf/staf"
@@ -417,6 +554,15 @@ check "docker_build.sh builds mitgcm:latest from the repo Dockerfile" '[ $RC -eq
 check "setup_links.sh linked all scripts" 'for s in experiment_compile.sh experiment_run_no_compile.sh docker_build.sh docker_run_interactive.sh compare_results.sh; do [ -L "$VER/$s" ] || exit 1; done'
 run_cmd "$SCRIPTS_DIR/setup_links.sh" "$VER"
 check "setup_links.sh is idempotent" '[ $RC -eq 0 ] && out_has "already linked"'
+check "setup_links.sh no longer copies the Dockerfile" '[ ! -e "$VER/Dockerfile" ]'
+cp "$PROJECT_ROOT/Dockerfile" "$VER/Dockerfile"
+run_cmd "$SCRIPTS_DIR/setup_links.sh" "$VER"
+check "setup_links.sh removes a Dockerfile copied there by older versions" '[ $RC -eq 0 ] && [ ! -e "$VER/Dockerfile" ]'
+echo "FROM scratch" > "$VER/Dockerfile"
+run_cmd "$SCRIPTS_DIR/setup_links.sh" "$VER"
+check "setup_links.sh leaves an unrelated Dockerfile alone" '[ -f "$VER/Dockerfile" ]'
+rm -f "$VER/Dockerfile"
+check "Dockerfile installs openssh-client (needed by TAF's staf)" 'grep -q "openssh-client" "$PROJECT_ROOT/Dockerfile"'
 
 # ---------------------------------------------------------------------------
 echo ""

@@ -17,6 +17,7 @@ execution of MITgcm verification experiments. The key idea is a
 source changes, not when input parameters change.
 
 - **Multi-architecture** — ARM64 (Apple Silicon) and x86_64 (Intel/AMD)
+- **Adjoint and tangent-linear builds** — `-adm` / `-tlm` compile, run and check TAF-generated models (requires your own TAF licence)
 - **Parallel builds** — `make -j N`
 - **No recompilation for input-only changes** — swap input directories freely
 - **testreport-compatible** — builds, input staging and result comparison follow MITgcm's own `testreport`
@@ -60,7 +61,9 @@ less 1D_ocean_ice_column/output_docker/output.txt
 `setup_links.sh` detects your architecture, checks that the matching
 build-options file exists in MITgcm's `tools/build_options/`
 (`linux_arm64_gfortran` or `linux_amd64_gfortran`), and symlinks the scripts
-plus this README into your verification directory.
+into your verification directory (plus this README, unless a `README.md` is
+already there — MITgcm ships its own `verification/README.md`, which is left
+alone).
 
 **Verify the image built correctly:**
 ```bash
@@ -109,6 +112,7 @@ Every script accepts `-h`/`--help`.
 
 ```
 ./experiment_compile.sh <experiment> [-j N] [-mpi] [-mods <dir>] [-build <dir>] [-clean]
+                        [-adm | -tlm] [-taf_dir <path>]
 ```
 
 | Flag | Meaning |
@@ -118,6 +122,8 @@ Every script accepts `-h`/`--help`.
 | `-mods <dir>` | Build with `<dir>` **instead of** the experiment's own `code/` directory. `<dir>` must be an **absolute path to an existing directory** and must contain everything `code/` would (`SIZE.h`, `packages.conf`, option files, …) plus your modified files. Symlinks inside it (at any depth) are dereferenced automatically. |
 | `-build <dir>` | Build directory name inside the experiment (default `build_docker`). Use a non-default name to keep multiple builds of the same experiment side by side. |
 | `-clean` | Delete the host-side build directory before compiling. |
+| `-adm` / `-tlm` | Build the TAF adjoint (`mitgcmuv_ad`) or tangent-linear (`mitgcmuv_ftl`) model from `code_ad/` instead of the forward model from `code/`. `-mpi` and `-mods` then refer to `code_ad/`. Default build directory: `build_docker_adm` / `build_docker_tlm`. See [TAF support](#taf-support-adjointtangent-linear). |
+| `-taf_dir <path>` | TAF installation containing `staf` (absolute path). Required with `-adm`/`-tlm` unless the `TAF_DIR` environment variable is set. |
 
 Compilation runs MITgcm's `testreport -norun` inside the container. testreport
 always runs `make Clean` first, so **every compile is a full rebuild** (about
@@ -125,27 +131,29 @@ always runs `make Clean` first, so **every compile is a full rebuild** (about
 `<experiment>/build/` of your MITgcm checkout; afterwards the build files and
 binary are copied to `<experiment>/<build-dir>/`, together with
 `compile.log` and `build_info.txt` (records whether the build is MPI and for
-how many processes). testreport's `tr_*` output directories are removed after
-each compile.
+how many processes, and the build kind: forward, `adm` or `tlm`). testreport's
+`tr_*` output directories are removed after each compile.
 
 ### `experiment_run_no_compile.sh`
 
 ```
-./experiment_run_no_compile.sh <experiment> [input_dir] [-mpi N] [-build <dir>] [-output <dir>]
+./experiment_run_no_compile.sh <experiment> [input_dir] [-mpi N] [-build <dir>] [-output <dir>] [-adm | -tlm]
 ```
 
 | Flag | Meaning |
 |---|---|
-| `input_dir` | Input directory to use (default `input`). Any positional argument that isn't a recognized flag is treated as this. |
+| `input_dir` | Input directory to use (default `input`, or `input_ad` with `-adm`/`-tlm`). Any positional argument that isn't a recognized flag is treated as this. |
 | `-mpi N` | Run with `N` MPI processes via `mpirun`. `N` must equal the process count the binary was compiled for (`nPx * nPy` from `SIZE.h_mpi`); a mismatch, or running an MPI build without `-mpi`, is rejected with the correct command. |
 | `-build <dir>` | Build directory to take the binary from (default `build_docker`) — must match whatever `-build` you used at compile time. |
-| `-output <dir>` | Output (run) directory name inside the experiment (default `output_docker`). |
+| `-output <dir>` | Output (run) directory name inside the experiment (default `output_docker`, or `output_docker_adm` / `output_docker_tlm`). |
+| `-adm` / `-tlm` | Run the adjoint (`mitgcmuv_ad`) or tangent-linear (`mitgcmuv_ftl`) binary built with `experiment_compile.sh -adm` / `-tlm`. The build directory must hold that kind of build; a mismatch is rejected. |
 
 Input files are staged the way testreport does it:
 
 - Files in `input_dir` are symlinked into the output directory (relative
   links, valid on the host too). For `input.<X>` directories (e.g.
-  `input.nlfs`), files missing from `input.<X>` are taken from `input/`.
+  `input.nlfs`), files missing from `input.<X>` are taken from `input/`;
+  likewise `input_ad.<X>` is layered on `input_ad/`.
 - For MPI runs, `<file>.mpi` variants (e.g. `data.exch2.mpi`) replace `<file>`.
 - If the input directory contains a `prepare_run` script, it is run in the
   output directory before the model starts.
@@ -160,12 +168,13 @@ The model log is `<output-dir>/output.txt` (for MPI runs it is a copy of
 `STDOUT.0000`; `mpirun`'s own messages go to `mpirun.log`). MITgcm exits with
 status 0 even when it stops on an error, so the script checks the log instead:
 it **exits non-zero unless the model reports `Execution ended Normally`**.
-`run_info.txt` records the input directory used, for `compare_results.sh`.
+`run_info.txt` records the input directory and build kind used, for
+`compare_results.sh`.
 
 ### `compare_results.sh`
 
 ```
-./compare_results.sh <experiment> [output_dir] [--match N] [--ref <file>]
+./compare_results.sh <experiment> [output_dir] [--match N] [--ref <file>] [-adm | -tlm]
 ```
 
 Compares `<experiment>/<output_dir>/output.txt` (default `output_docker`)
@@ -184,6 +193,15 @@ MITgcm's `testreport`:
 - The reference is `results/output.txt`, or `results/output.<X>.txt` when the
   run used `input.<X>` (override with `--ref <file>`). MPI outputs are handled
   automatically.
+- Adjoint and tangent-linear runs (detected from the run's `run_info.txt`;
+  `-adm`/`-tlm` also select the default output directory) are compared the
+  way `testreport -adm` / `-tlm` does it: against `results/output_adm.txt` /
+  `output_tlm.txt` (or `.<X>.txt` for `input_ad.<X>`), with the gradient
+  check deciding — by default `admGrd admCst admGrd admFwd T+ S+ U+ V+`
+  (adjoint gradient, cost, finite-difference gradient, then adjoint-field
+  statistics such as `dynstat_adtheta_*`) and `tlmGrd tlmCst tlmGrd tlmFwd`.
+  `tr_checklist.adm` / `tr_checklist.tlm` override `tr_checklist`, and TLM
+  runs rename its `adm*` entries to `tlm*`, as testreport does.
 
 Exits `0` (PASS) if the deciding variable matches at least `--match N`
 digits (default `10`, the same as testreport), `1` (FAIL) otherwise. The
@@ -203,6 +221,10 @@ non-interactively instead:
 
 ```bash
 echo 'cd 1D_ocean_ice_column && ls' | ./docker_run_interactive.sh
+
+# testreport reads stdin: redirect it, or it swallows the rest of the piped commands
+echo './testreport -adm -t 1D_ocean_ice_column -of $OPTFILE < /dev/null' \
+    | ./docker_run_interactive.sh -taf_dir /path/to/TAF
 ```
 
 If the `mitgcm:latest` image does not exist yet, it is built with
@@ -236,9 +258,10 @@ MITgcm_verification_docker/
     └── new_install_stress_test.sh   # end-to-end test on a fresh MITgcm clone (real Docker)
 ```
 
-`setup_links.sh` symlinks the five user-facing scripts and this README into
-your MITgcm `verification/` directory (except `Dockerfile`, which is copied
-rather than symlinked, since Docker requires a real file as its build context).
+`setup_links.sh` symlinks the five user-facing scripts (and this README, if
+no `README.md` exists there) into your MITgcm `verification/` directory. No copy of the `Dockerfile` is placed
+there: `docker_build.sh` always builds from this repository's `Dockerfile`
+(older versions copied it, and `setup_links.sh` now removes that stale copy).
 
 ## How it works
 
@@ -324,25 +347,89 @@ Both flags require **absolute paths**; relative paths are rejected.
 
 ## TAF support (adjoint/tangent linear)
 
-`docker_run_interactive.sh -taf_dir <path>` mounts a TAF (Tangent linear and
-Adjoint Model Compiler) installation at `/taf`, adds it to `PATH`, and mounts
-`~/.ssh` **read-only** at `/home/mitgcm/.ssh` for TAF license validation.
+MITgcm's adjoint and tangent-linear models are generated by TAF (Transformation
+of Algorithms in Fortran), which runs on FastOpt's server: the `staf` client
+script uploads the model source over ssh and receives the generated code. You
+need your own TAF licence: a `staf` script and the key it uses, `~/.ssh/taf`.
+
+**One-time host check** — `staf` must reach the server from your host first,
+because `~/.ssh` is mounted **read-only** into the container and ssh there
+cannot record the server's host key in `known_hosts`:
 
 ```bash
-./docker_run_interactive.sh -code /path/to/custom/code -taf_dir /path/to/TAF
-
-# Inside the container:
-which staf                # /taf/staf
-cd lab_sea/build
-../../../tools/genmake2 -mods=/custom_code -optfile=$OPTFILE
-make depend
-make adall                 # adjoint
-make ftlall                # tangent linear
+/path/to/TAF/staf -test        # "Your access to the TAF server is enabled."
 ```
 
-`<path>` should contain the `staf` executable (a warning is printed if it does
-not). Because `~/.ssh` is mounted read-only, the container can read license
-keys but cannot alter your SSH configuration.
+**Compile, run and check** — the same compile-once workflow as forward runs,
+with `-adm` (adjoint) or `-tlm` (tangent linear). Only experiments with a
+`code_ad/` directory can be built this way (e.g. `1D_ocean_ice_column`,
+`hs94.1x64x5`, `lab_sea`, `tutorial_tracer_adjsens`, `global_ocean.90x40x15`).
+
+```bash
+./experiment_compile.sh 1D_ocean_ice_column -adm -taf_dir /path/to/TAF -j 8
+./experiment_run_no_compile.sh 1D_ocean_ice_column -adm
+./compare_results.sh 1D_ocean_ice_column -adm
+
+./experiment_compile.sh 1D_ocean_ice_column -tlm -taf_dir /path/to/TAF -j 8
+./experiment_run_no_compile.sh 1D_ocean_ice_column -tlm
+./compare_results.sh 1D_ocean_ice_column -tlm
+```
+
+(`export TAF_DIR=/path/to/TAF` saves repeating `-taf_dir`.)
+
+| | Forward | `-adm` | `-tlm` |
+|---|---|---|---|
+| Code directory | `code/` | `code_ad/` | `code_ad/` |
+| make target → binary | `mitgcmuv` | `adall` → `mitgcmuv_ad` | `ftlall` → `mitgcmuv_ftl` |
+| Default build / output dir | `build_docker` / `output_docker` | `build_docker_adm` / `output_docker_adm` | `build_docker_tlm` / `output_docker_tlm` |
+| Default input dir | `input` | `input_ad` | `input_ad` |
+| Reference | `results/output.txt` | `results/output_adm.txt` | `results/output_tlm.txt` |
+
+The separate default directories let forward, adjoint and tangent-linear
+builds of one experiment coexist. Everything else works as for forward runs:
+
+```bash
+# Secondary input (input_ad.som81 is layered on input_ad/, compared with output_adm.som81.txt)
+./experiment_compile.sh tutorial_tracer_adjsens -adm -taf_dir /path/to/TAF -j 8
+./experiment_run_no_compile.sh tutorial_tracer_adjsens input_ad.som81 -adm -output output_adm_som81
+./compare_results.sh tutorial_tracer_adjsens output_adm_som81
+
+# MPI (process count from code_ad/SIZE.h_mpi)
+./experiment_compile.sh tutorial_dic_adjoffline -adm -mpi -taf_dir /path/to/TAF -j 8
+./experiment_run_no_compile.sh tutorial_dic_adjoffline -adm -mpi 8
+
+# Modified adjoint code: -mods replaces code_ad/ (start from a copy of it)
+cp -r lab_sea/code_ad /path/to/project/code_ad_mods
+./experiment_compile.sh lab_sea -adm -mods /path/to/project/code_ad_mods -taf_dir /path/to/TAF
+```
+
+The compile mounts the TAF directory at `/taf` (first on `PATH`) and `~/.ssh`
+read-only at `/home/mitgcm/.ssh`, so the container can read the key but not
+change your SSH configuration. The script warns if `~/.ssh/taf` is missing or
+`fastopt.de` is not in `~/.ssh/known_hosts`.
+
+TAF builds have been verified on x86_64 Linux (Docker Engine), where the
+container user and your host user share uid 1000 so `ssh` accepts the mounted
+key's ownership and `600` permissions. On macOS/Windows Docker Desktop and on
+ARM64 they are untested; if `staf` reports key-permission errors there, check
+`ls -la /home/mitgcm/.ssh` inside `docker_run_interactive.sh -taf_dir ...`.
+
+**By hand / MITgcm's own test** — `docker_run_interactive.sh -taf_dir <path>`
+gives a shell with the same TAF mounts, for debugging a TAF build step by
+step or running testreport's adjoint/TLM tests directly:
+
+```bash
+./docker_run_interactive.sh -taf_dir /path/to/TAF
+
+# Inside the container:
+staf -test                                   # TAF server reachable?
+./testreport -adm -t 1D_ocean_ice_column -of $OPTFILE    # or -tlm
+cd lab_sea/build
+../../../tools/genmake2 -mods=../code_ad -optfile=$OPTFILE
+make depend
+make adall                 # adjoint        -> mitgcmuv_ad
+make ftlall                # tangent linear -> mitgcmuv_ftl
+```
 
 If your project has its own TAF setup notes (build flags, license quirks,
 specific experiments), keep those alongside that project rather than in this
@@ -412,11 +499,13 @@ done
 tests/test_script_integration.sh     # argument handling, seconds, no Docker
 tests/test_regressions.sh            # regression tests with a mock docker, seconds, no Docker
 tests/new_install_stress_test.sh     # full end-to-end check on a fresh MITgcm clone (real Docker)
+tests/new_install_stress_test.sh --taf-dir /path/to/TAF   # ... plus real TAF adjoint/TLM checks
 ```
 
 The stress test clones MITgcm, installs these tools the way a new user would,
 and checks every documented behaviour against real builds and runs, including
-cross-checking `compare_results.sh` against testreport itself. See
+cross-checking `compare_results.sh` against testreport itself (including
+`testreport -adm` / `-tlm` when `--taf-dir` is given). See
 [VERIFY_NEW_INSTALL_README.md](VERIFY_NEW_INSTALL_README.md) for options, the list of checks
 and how to read the results.
 
@@ -430,7 +519,11 @@ and how to read the results.
 | `Compilation FAILED` | Read `<experiment>/<build-dir>/compile.log` |
 | `Model did not end normally` | Read the end of `<experiment>/<output-dir>/output.txt` (and `mpirun.log` for MPI runs); usually a missing or wrong input file |
 | `-mpi N does not match the build` | Use the process count printed by `experiment_compile.sh -mpi` (`nPx * nPy` from `SIZE.h_mpi`) |
-| `Found leftover code_orig/` | A `-mods` compile was interrupted; restore with `cd <experiment> && rm -rf code && mv code_orig code` |
+| `Found leftover code_orig/` | A `-mods` compile was interrupted; restore with `cd <experiment> && rm -rf code && mv code_orig code` (for `-adm`/`-tlm`: `code_ad_orig` → `code_ad`) |
+| `-adm needs a TAF installation` | Pass `-taf_dir /path/to/TAF` (the directory containing `staf`) or `export TAF_DIR=...` |
+| TAF build fails: `Host key verification failed` | `fastopt.de` is not in `~/.ssh/known_hosts`; run `/path/to/TAF/staf -test` once on the host |
+| TAF build fails: `Permission denied (publickey)` | The TAF server did not accept `~/.ssh/taf`; check `staf -test` on the host |
+| `holds mitgcmuv_ad instead; run with -adm` | The build directory holds an adjoint/TLM build; add the matching `-adm`/`-tlm` to the run command |
 | Scripts stop working after moving the repo | Re-run `./scripts/setup_links.sh /path/to/MITgcm/verification` |
 | `-mods`/`-code` rejected | Both require absolute paths to existing directories — relative paths are rejected on purpose |
 | "File not found" with custom code under `-code` | Directory likely has symlinks pointing outside it — add `-dereference` (compile's `-mods` does this automatically, no flag needed there) |

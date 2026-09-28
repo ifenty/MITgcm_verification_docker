@@ -2,17 +2,22 @@
 #
 # Run MITgcm using existing compiled binary (NO COMPILATION)
 #
-# Usage: ./experiment_run_no_compile.sh <experiment> [input_dir] [-mpi N] [-build <dir>] [-output <dir>]
+# Usage: ./experiment_run_no_compile.sh <experiment> [input_dir] [-mpi N] [-build <dir>] [-output <dir>] [-adm | -tlm]
 #
 # Options:
-#   input_dir      Input directory (default: input)
+#   input_dir      Input directory (default: input, or input_ad with -adm/-tlm)
 #   -mpi N         Run with MPI using N processes (must match the MPI build)
-#   -build <dir>   Build directory holding the compiled mitgcmuv (default: build_docker)
-#   -output <dir>  Output (run) directory name (default: output_docker)
+#   -build <dir>   Build directory holding the compiled binary (default: build_docker,
+#                  or build_docker_adm / build_docker_tlm)
+#   -output <dir>  Output (run) directory name (default: output_docker, or
+#                  output_docker_adm / output_docker_tlm)
+#   -adm           Run the TAF adjoint binary (mitgcmuv_ad) built with experiment_compile.sh -adm
+#   -tlm           Run the TAF tangent-linear binary (mitgcmuv_ftl) built with -tlm
 #
 # Input files are staged the same way MITgcm's testreport does it:
 #   - files from input_dir are linked into the output directory; for
 #     input.<X>, files missing from input.<X> are taken from input/
+#     (input_ad.<X> is layered on input_ad/ the same way)
 #   - for MPI runs, <file>.mpi variants replace <file>
 #   - an input_dir/prepare_run script, if present, is run in the output directory
 # Symlinks and STDOUT/STDERR files left in the output directory by a previous
@@ -21,23 +26,28 @@
 # Exit status is non-zero if the model does not end with
 # "Execution ended Normally".
 #
-# Prerequisites: mitgcmuv in the build directory (run experiment_compile.sh first)
+# Prerequisites: the binary in the build directory (run experiment_compile.sh first)
 
 set -e
 
 # Check for help or no arguments before anything that depends on being run
 # from inside a MITgcm checkout, so -h always works (even from a bare clone).
 if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
-    echo "Usage: $0 <experiment_name> [input_dir] [-mpi N] [-build <dir>] [-output <dir>]"
+    echo "Usage: $0 <experiment_name> [input_dir] [-mpi N] [-build <dir>] [-output <dir>] [-adm | -tlm]"
     echo ""
     echo "Options:"
-    echo "  input_dir     Input directory (default: input)"
-    echo "                Examples: input, input.nlfs, input_custom"
-    echo "                (input.<X> is layered on top of input/, as testreport does)"
+    echo "  input_dir     Input directory (default: input; input_ad with -adm/-tlm)"
+    echo "                Examples: input, input.nlfs, input_custom, input_ad.som81"
+    echo "                (input.<X> is layered on top of input/, and input_ad.<X> on top"
+    echo "                of input_ad/, as testreport does)"
     echo "  -mpi N        Run with MPI using N processes (must equal the process"
     echo "                count the binary was compiled for; shown by experiment_compile.sh)"
-    echo "  -build <dir>  Build directory name where binary is located (default: build_docker)"
-    echo "  -output <dir> Output directory name for model outputs (default: output_docker)"
+    echo "  -build <dir>  Build directory name where binary is located (default: build_docker;"
+    echo "                build_docker_adm / build_docker_tlm with -adm / -tlm)"
+    echo "  -output <dir> Output directory name for model outputs (default: output_docker;"
+    echo "                output_docker_adm / output_docker_tlm with -adm / -tlm)"
+    echo "  -adm          Run the TAF adjoint (mitgcmuv_ad from experiment_compile.sh -adm)"
+    echo "  -tlm          Run the TAF tangent linear (mitgcmuv_ftl from experiment_compile.sh -tlm)"
     echo ""
     echo "Examples:"
     echo "  $0 1D_ocean_ice_column                       # Use defaults"
@@ -45,9 +55,11 @@ if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
     echo "  $0 lab_sea -output output_validation         # Custom output dir"
     echo "  $0 lab_sea -build build_validation -output output_validation  # Custom dirs"
     echo "  $0 tutorial_barotropic_gyre -mpi 4           # MPI with 4 procs"
+    echo "  $0 1D_ocean_ice_column -adm                  # TAF adjoint, input_ad/"
+    echo "  $0 tutorial_tracer_adjsens input_ad.som81 -tlm   # TLM, secondary input"
     echo ""
     echo "Prerequisites:"
-    echo "  Must have mitgcmuv binary in build directory"
+    echo "  Must have the binary (mitgcmuv, mitgcmuv_ad or mitgcmuv_ftl) in build directory"
     echo "  Run experiment_compile.sh first if needed"
     echo "  Use same -build flag as used during compilation"
     echo ""
@@ -59,7 +71,7 @@ fi
 if [[ "$1" == -* ]]; then
     echo "Error: experiment name is required"
     echo ""
-    echo "Usage: $0 <experiment_name> [input_dir] [-mpi N] [-build <dir>] [-output <dir>]"
+    echo "Usage: $0 <experiment_name> [input_dir] [-mpi N] [-build <dir>] [-output <dir>] [-adm | -tlm]"
     echo ""
     echo "Examples:"
     echo "  $0 1D_ocean_ice_column"
@@ -96,9 +108,10 @@ fi
 VERIFICATION_DIR="$MITGCM_ROOT/verification"
 
 EXPERIMENT="$1"
-INPUT_DIR="input"
-OUTPUT_DIR_NAME="output_docker"
-BUILD_DIR_NAME="build_docker"
+INPUT_DIR=""        # defaults depend on the kind of run (set after parsing)
+OUTPUT_DIR_NAME=""
+BUILD_DIR_NAME=""
+KIND=forward        # forward | adm | tlm
 USE_MPI=false
 MPI_PROCS=1
 
@@ -145,9 +158,17 @@ while [[ $# -gt 0 ]]; do
             BUILD_DIR_NAME="$2"
             shift 2
             ;;
+        -adm|-tlm)
+            if [ "$KIND" != forward ] && [ "$KIND" != "${1#-}" ]; then
+                echo "Error: -adm and -tlm cannot be combined"
+                exit 1
+            fi
+            KIND="${1#-}"
+            shift
+            ;;
         -*)
             echo "Unknown option: $1"
-            echo "Usage: $0 <experiment_name> [input_dir] [-mpi N] [-build <dir>] [-output <dir>]"
+            echo "Usage: $0 <experiment_name> [input_dir] [-mpi N] [-build <dir>] [-output <dir>] [-adm | -tlm]"
             echo "Try '$0 --help' for more information"
             exit 1
             ;;
@@ -159,6 +180,18 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+case "$KIND" in
+    forward) BINARY=mitgcmuv;     BASE_INPUT=input;    SUFFIX="" ;;
+    adm)     BINARY=mitgcmuv_ad;  BASE_INPUT=input_ad; SUFFIX="_adm" ;;
+    tlm)     BINARY=mitgcmuv_ftl; BASE_INPUT=input_ad; SUFFIX="_tlm" ;;
+esac
+DEFAULT_BUILD_DIR_NAME="build_docker$SUFFIX"
+[ -z "$INPUT_DIR" ] && INPUT_DIR="$BASE_INPUT"
+[ -z "$BUILD_DIR_NAME" ] && BUILD_DIR_NAME="$DEFAULT_BUILD_DIR_NAME"
+[ -z "$OUTPUT_DIR_NAME" ] && OUTPUT_DIR_NAME="output_docker$SUFFIX"
+KIND_ARG=""
+[ "$KIND" != forward ] && KIND_ARG=" -$KIND"
 
 EXP_DIR="$VERIFICATION_DIR/$EXPERIMENT"
 
@@ -178,14 +211,29 @@ fi
 BUILD_DIR="$EXP_DIR/$BUILD_DIR_NAME"
 OUTPUT_DIR="$EXP_DIR/$OUTPUT_DIR_NAME"
 
-if [ ! -f "$BUILD_DIR/mitgcmuv" ]; then
-    echo "Error: Binary not found at $BUILD_DIR/mitgcmuv"
+if [ ! -f "$BUILD_DIR/$BINARY" ]; then
+    echo "Error: Binary not found at $BUILD_DIR/$BINARY"
     echo ""
+    # A binary of another kind in this build dir means the -adm/-tlm flag is off
+    for other in mitgcmuv mitgcmuv_ad mitgcmuv_ftl; do
+        [ "$other" = "$BINARY" ] && continue
+        if [ -f "$BUILD_DIR/$other" ]; then
+            case "$other" in
+                mitgcmuv)     hint="(no -adm/-tlm)" ;;
+                mitgcmuv_ad)  hint="-adm" ;;
+                mitgcmuv_ftl) hint="-tlm" ;;
+            esac
+            echo "$BUILD_DIR_NAME holds $other instead; run with $hint to use it."
+            echo ""
+        fi
+    done
+    TAF_HINT=""
+    [ "$KIND" != forward ] && TAF_HINT=" -taf_dir /path/to/TAF"
     echo "Please compile first:"
-    if [ "$BUILD_DIR_NAME" != "build_docker" ]; then
-        echo "  ./experiment_compile.sh $EXPERIMENT -build $BUILD_DIR_NAME [-j N] [-mpi]"
+    if [ "$BUILD_DIR_NAME" != "$DEFAULT_BUILD_DIR_NAME" ]; then
+        echo "  ./experiment_compile.sh $EXPERIMENT$KIND_ARG$TAF_HINT -build $BUILD_DIR_NAME [-j N] [-mpi]"
     else
-        echo "  ./experiment_compile.sh $EXPERIMENT [-j N] [-mpi]"
+        echo "  ./experiment_compile.sh $EXPERIMENT$KIND_ARG$TAF_HINT [-j N] [-mpi]"
     fi
     exit 1
 fi
@@ -195,28 +243,36 @@ fi
 if [ -f "$BUILD_DIR/build_info.txt" ]; then
     BUILT_MPI="$(sed -n 's/^MPI=//p' "$BUILD_DIR/build_info.txt")"
     BUILT_NPROCS="$(sed -n 's/^NPROCS=//p' "$BUILD_DIR/build_info.txt")"
+    BUILT_KIND="$(sed -n 's/^KIND=//p' "$BUILD_DIR/build_info.txt")"
+    if [ "${BUILT_KIND:-forward}" != "$KIND" ]; then
+        echo "Error: $BUILD_DIR_NAME was compiled as a '${BUILT_KIND:-forward}' build, not '$KIND'."
+        exit 1
+    fi
     if [ "$BUILT_MPI" = "true" ] && [ "$USE_MPI" != true ]; then
-        echo "Error: $BUILD_DIR_NAME/mitgcmuv was compiled with MPI for $BUILT_NPROCS processes."
-        echo "Run it with:  $0 $EXPERIMENT -mpi $BUILT_NPROCS"
+        echo "Error: $BUILD_DIR_NAME/$BINARY was compiled with MPI for $BUILT_NPROCS processes."
+        echo "Run it with:  $0 $EXPERIMENT$KIND_ARG -mpi $BUILT_NPROCS"
         exit 1
     fi
     if [ "$BUILT_MPI" != "true" ] && [ "$USE_MPI" = true ]; then
-        echo "Error: $BUILD_DIR_NAME/mitgcmuv was compiled without MPI; -mpi $MPI_PROCS cannot be used."
-        echo "Recompile with:  ./experiment_compile.sh $EXPERIMENT -mpi"
+        echo "Error: $BUILD_DIR_NAME/$BINARY was compiled without MPI; -mpi $MPI_PROCS cannot be used."
+        echo "Recompile with:  ./experiment_compile.sh $EXPERIMENT$KIND_ARG -mpi"
         exit 1
     fi
     if [ "$USE_MPI" = true ] && [ -n "$BUILT_NPROCS" ] && [ "$MPI_PROCS" != "$BUILT_NPROCS" ]; then
         echo "Error: -mpi $MPI_PROCS does not match the build, which was compiled for $BUILT_NPROCS processes."
-        echo "Run it with:  $0 $EXPERIMENT -mpi $BUILT_NPROCS"
+        echo "Run it with:  $0 $EXPERIMENT$KIND_ARG -mpi $BUILT_NPROCS"
         exit 1
     fi
 fi
 
-# Input directories in priority order (testreport: input.<X> first, then input)
+# Input directories in priority order (testreport: input.<X> first, then
+# input; likewise input_ad.<X>, then input_ad)
 INPUT_DIRS=("$INPUT_DIR")
-if [[ "$INPUT_DIR" == input.* ]] && [ -d "$EXP_DIR/input" ]; then
-    INPUT_DIRS+=("input")
-fi
+for base in input input_ad; do
+    if [[ "$INPUT_DIR" == "$base".* ]] && [ -d "$EXP_DIR/$base" ]; then
+        INPUT_DIRS+=("$base")
+    fi
+done
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -253,11 +309,13 @@ fi
 
 # Copy binary from build directory to output directory
 echo "Copying binary from $BUILD_DIR_NAME to $OUTPUT_DIR_NAME..."
-cp "$BUILD_DIR/mitgcmuv" "$OUTPUT_DIR/mitgcmuv"
+rm -f "$OUTPUT_DIR/mitgcmuv" "$OUTPUT_DIR/mitgcmuv_ad" "$OUTPUT_DIR/mitgcmuv_ftl"
+cp "$BUILD_DIR/$BINARY" "$OUTPUT_DIR/$BINARY"
 
 # Record what produced this output (read by compare_results.sh)
 cat > "$OUTPUT_DIR/run_info.txt" <<EOF
 EXPERIMENT=$EXPERIMENT
+KIND=$KIND
 INPUT_DIR=$INPUT_DIR
 BUILD_DIR=$BUILD_DIR_NAME
 MPI=$USE_MPI
@@ -268,9 +326,14 @@ echo "=========================================="
 echo "Running MITgcm (NO COMPILATION)"
 echo "=========================================="
 echo "  Experiment: $EXPERIMENT"
+if [ "$KIND" = adm ]; then
+echo "  Kind:       adjoint (TAF)"
+elif [ "$KIND" = tlm ]; then
+echo "  Kind:       tangent linear (TAF)"
+fi
 echo "  Build:      $BUILD_DIR_NAME"
 echo "  Input:      ${INPUT_DIRS[*]}"
-echo "  Binary:     $(ls -lh "$OUTPUT_DIR/mitgcmuv" | awk '{print $5}')"
+echo "  Binary:     $BINARY ($(ls -lh "$OUTPUT_DIR/$BINARY" | awk '{print $5}'))"
 echo "  MPI:        $USE_MPI"
 if [ "$USE_MPI" = true ]; then
     echo "  Processes:  $MPI_PROCS"
@@ -294,9 +357,9 @@ docker run --rm \
 
     echo 'Running model...'
     if [ \"$USE_MPI\" = true ]; then
-        mpirun --oversubscribe -np $MPI_PROCS ./mitgcmuv > mpirun.log 2>&1
+        mpirun --oversubscribe -np $MPI_PROCS ./$BINARY > mpirun.log 2>&1
     else
-        ./mitgcmuv > output.txt 2>&1
+        ./$BINARY > output.txt 2>&1
     fi
 " || RUN_RC=$?
 
