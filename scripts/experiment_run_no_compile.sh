@@ -345,9 +345,15 @@ echo ""
 
 # Run in Docker with MITgcm mounted from host. The run directory lives inside
 # the mounted tree, so relative paths used by prepare_run scripts resolve.
+# MITGCM_EXTRA_MOUNTS: optional space-separated host directories, each mounted at
+# the same path in the container, so experiment directories that are symlinks
+# out of $MITGCM_ROOT/verification (e.g. to a run root) resolve there too.
+EXTRA_MOUNT_ARGS=()
+for _m in ${MITGCM_EXTRA_MOUNTS:-}; do EXTRA_MOUNT_ARGS+=(-v "$_m:$_m"); done
 RUN_RC=0
 docker run --rm \
     -v "$MITGCM_ROOT:/mitgcm" \
+    "${EXTRA_MOUNT_ARGS[@]}" \
     -w "/mitgcm/verification/$EXPERIMENT/$OUTPUT_DIR_NAME" \
     mitgcm:latest bash -c "
     if [ -x prepare_run ]; then

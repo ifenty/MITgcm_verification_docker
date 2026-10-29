@@ -396,9 +396,15 @@ if [ "$USE_MPI" = true ]; then
 fi
 
 # Compile in Docker with MITgcm mounted from host
+# MITGCM_EXTRA_MOUNTS: optional space-separated host directories, each mounted at
+# the same path in the container, so experiment directories that are symlinks
+# out of $MITGCM_ROOT/verification (e.g. to a run root) resolve there too.
+EXTRA_MOUNT_ARGS=()
+for _m in ${MITGCM_EXTRA_MOUNTS:-}; do EXTRA_MOUNT_ARGS+=(-v "$_m:$_m"); done
 COMPILE_RC=0
 docker run --rm \
     -v "$MITGCM_ROOT:/mitgcm" \
+    "${EXTRA_MOUNT_ARGS[@]}" \
     -v "$BUILD_DIR:/build_output" \
     "${MODS_MOUNT_ARGS[@]}" \
     "${TAF_MOUNT_ARGS[@]}" \
