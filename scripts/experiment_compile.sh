@@ -403,6 +403,8 @@ EXTRA_MOUNT_ARGS=()
 for _m in ${MITGCM_EXTRA_MOUNTS:-}; do EXTRA_MOUNT_ARGS+=(-v "$_m:$_m"); done
 COMPILE_RC=0
 docker run --rm \
+    --user "$(id -u):$(id -g)" \
+    -e HOME=/home/mitgcm \
     -v "$MITGCM_ROOT:/mitgcm" \
     "${EXTRA_MOUNT_ARGS[@]}" \
     -v "$BUILD_DIR:/build_output" \

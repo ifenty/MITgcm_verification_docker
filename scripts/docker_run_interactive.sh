@@ -463,7 +463,7 @@ fi
 
 # Build environment arguments (OPTFILE is also set by the image's .bashrc,
 # but that is only read by interactive shells)
-ENV_ARGS=(-e "OPTFILE=/mitgcm/tools/build_options/$OPTFILE")
+ENV_ARGS=(-e "OPTFILE=/mitgcm/tools/build_options/$OPTFILE" -e "HOME=/home/mitgcm")
 if [[ -n "$TAF_DIR" ]]; then
     # Add /taf to PATH
     ENV_ARGS+=(-e "PATH=/taf:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mitgcm/tools")
@@ -482,6 +482,7 @@ fi
 
 docker run --rm "${TTY_ARGS[@]}" \
     --platform "$PLATFORM" \
+    --user "$(id -u):$(id -g)" \
     "${MOUNT_ARGS[@]}" \
     "${ENV_ARGS[@]}" \
     -w /mitgcm/verification \
