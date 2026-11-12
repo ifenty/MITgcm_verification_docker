@@ -399,7 +399,7 @@ fi
 if [[ -n "$TAF_DIR" ]]; then
     echo "  /taf -> $TAF_DIR"
     if [[ -d "$HOME/.ssh" ]]; then
-        echo "  /home/mitgcm/.ssh -> $HOME/.ssh (read-only)"
+        echo "  /home/mitgcm/.ssh -> temp copy of TAF key + known_hosts from $HOME/.ssh"
     fi
 fi
 echo ""
@@ -444,21 +444,40 @@ if [[ -n "$CODE_DIR_TO_MOUNT" ]]; then
 fi
 if [[ -n "$TAF_DIR" ]]; then
     MOUNT_ARGS+=(-v "$TAF_DIR:/taf")
-    # Mount ~/.ssh for TAF license key (read-only for security)
+    # Mount just the TAF key + known_hosts (read-write temp copy, see below)
+    # instead of the whole ~/.ssh: mounting the real ~/.ssh also exposes the
+    # host's ssh_config (e.g. a ControlMaster/ControlPath directive for
+    # multiplexed sessions) inside the container, and ssh then tries to
+    # create its control socket under ~/.ssh and fails since that mount is
+    # read-only.
     if [[ -d "$HOME/.ssh" ]]; then
-        MOUNT_ARGS+=(-v "$HOME/.ssh:/home/mitgcm/.ssh:ro")
         [[ -f "$HOME/.ssh/taf" ]] || \
             echo "Warning: ~/.ssh/taf (the key staf uses) not found; TAF will likely fail"
-        # ~/.ssh is read-only in the container, so ssh there cannot record a
-        # new host key: the TAF server must already be in known_hosts.
         if command -v ssh-keygen > /dev/null 2>&1 && \
            ! ssh-keygen -F fastopt.de -f "$HOME/.ssh/known_hosts" > /dev/null 2>&1; then
             echo "Warning: fastopt.de is not in ~/.ssh/known_hosts; staf will fail in the"
             echo "         container. Run '$TAF_DIR/staf -test' once on this host first."
         fi
+        TAF_SSH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mitgcm_ssh.XXXXXX")"
+        chmod 700 "$TAF_SSH_DIR"
+        [[ -f "$HOME/.ssh/taf" ]] && cp "$HOME/.ssh/taf" "$TAF_SSH_DIR/taf" && chmod 600 "$TAF_SSH_DIR/taf"
+        [[ -f "$HOME/.ssh/taf.pub" ]] && cp "$HOME/.ssh/taf.pub" "$TAF_SSH_DIR/taf.pub"
+        [[ -f "$HOME/.ssh/known_hosts" ]] && cp "$HOME/.ssh/known_hosts" "$TAF_SSH_DIR/known_hosts"
+        TEMP_DIRS+=("$TAF_SSH_DIR")
+        MOUNT_ARGS+=(-v "$TAF_SSH_DIR:/home/mitgcm/.ssh")
     else
         echo "Warning: ~/.ssh directory not found, TAF may not have access to license key"
     fi
+    # ssh (used by staf) does a getpwuid() lookup on startup and refuses to
+    # run at all if the --user uid:gid below has no /etc/passwd entry inside
+    # the container -- true for any uid that only resolves via the host's
+    # NIS/LDAP, since the container has no NIS/LDAP client. Synthesize a
+    # minimal passwd file with just that one entry and mount it over the
+    # container's own.
+    TAF_PASSWD_FILE="$(mktemp "${TMPDIR:-/tmp}/mitgcm_passwd.XXXXXX")"
+    echo "mitgcm:x:$(id -u):$(id -g)::/home/mitgcm:/bin/bash" > "$TAF_PASSWD_FILE"
+    TEMP_DIRS+=("$TAF_PASSWD_FILE")
+    MOUNT_ARGS+=(-v "$TAF_PASSWD_FILE:/etc/passwd:ro")
 fi
 
 # Build environment arguments (OPTFILE is also set by the image's .bashrc,

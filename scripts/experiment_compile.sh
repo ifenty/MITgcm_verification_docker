@@ -296,7 +296,26 @@ if [ "$KIND" != forward ]; then
         echo "Warning: fastopt.de is not in ~/.ssh/known_hosts; staf will fail inside"
         echo "         the container. Run '$TAF_DIR/staf -test' once on this host first."
     fi
-    TAF_MOUNT_ARGS=(-v "$TAF_DIR:/taf" -v "$HOME/.ssh:/home/mitgcm/.ssh:ro")
+    # ssh (used by staf to reach the TAF server) does a getpwuid() lookup on
+    # startup and refuses to run at all if the --user uid:gid we pass below
+    # has no /etc/passwd entry inside the container -- which is always true
+    # for a uid that only resolves via the host's NIS/LDAP, since the
+    # container has no NIS/LDAP client. Synthesize a minimal passwd file
+    # with just that one entry and mount it over the container's own.
+    TAF_PASSWD_FILE="$(mktemp "${TMPDIR:-/tmp}/mitgcm_passwd.XXXXXX")"
+    echo "mitgcm:x:$(id -u):$(id -g)::/home/mitgcm:/bin/bash" > "$TAF_PASSWD_FILE"
+    # Mounting the host's whole ~/.ssh read-only also exposes its ssh_config
+    # (e.g. a ControlMaster/ControlPath directive for multiplexed sessions)
+    # inside the container; ssh then tries to create the control socket
+    # under ~/.ssh and fails since the mount is read-only. Copy just the TAF
+    # key + known_hosts into a fresh, writable temp dir instead, so the
+    # container's ssh never sees the host's ssh_config at all.
+    TAF_SSH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mitgcm_ssh.XXXXXX")"
+    chmod 700 "$TAF_SSH_DIR"
+    [ -f "$HOME/.ssh/taf" ] && cp "$HOME/.ssh/taf" "$TAF_SSH_DIR/taf" && chmod 600 "$TAF_SSH_DIR/taf"
+    [ -f "$HOME/.ssh/taf.pub" ] && cp "$HOME/.ssh/taf.pub" "$TAF_SSH_DIR/taf.pub"
+    [ -f "$HOME/.ssh/known_hosts" ] && cp "$HOME/.ssh/known_hosts" "$TAF_SSH_DIR/known_hosts"
+    TAF_MOUNT_ARGS=(-v "$TAF_DIR:/taf" -v "$TAF_SSH_DIR:/home/mitgcm/.ssh" -v "$TAF_PASSWD_FILE:/etc/passwd:ro")
     TAF_ENV_ARGS=(-e "PATH=/taf:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mitgcm/tools")
 fi
 
@@ -361,7 +380,7 @@ echo "Mounting directories:"
 echo "  MITgcm: $MITGCM_ROOT -> /mitgcm (read-write)"
 echo "  Build:  $BUILD_DIR -> /build_output (read-write)"
 if [ "$KIND" != forward ]; then
-echo "  TAF:    $TAF_DIR -> /taf (on PATH), ~/.ssh -> /home/mitgcm/.ssh (read-only)"
+echo "  TAF:    $TAF_DIR -> /taf (on PATH), ~/.ssh -> temp copy of TAF key + known_hosts"
 fi
 
 # Mods directory: symlinks (at any depth) are dereferenced into a temp copy,
@@ -371,6 +390,12 @@ TEMP_MODS_DIR=""
 cleanup_temp_mods() {
     if [ -n "$TEMP_MODS_DIR" ] && [ -d "$TEMP_MODS_DIR" ]; then
         rm -rf "$TEMP_MODS_DIR"
+    fi
+    if [ -n "${TAF_PASSWD_FILE:-}" ] && [ -f "$TAF_PASSWD_FILE" ]; then
+        rm -f "$TAF_PASSWD_FILE"
+    fi
+    if [ -n "${TAF_SSH_DIR:-}" ] && [ -d "$TAF_SSH_DIR" ]; then
+        rm -rf "$TAF_SSH_DIR"
     fi
 }
 trap cleanup_temp_mods EXIT
